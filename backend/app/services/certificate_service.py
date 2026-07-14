@@ -16,6 +16,7 @@
 
 import hashlib
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -121,11 +122,20 @@ def _generate_pdf(certificate_no: str, student: Student, template: dict,
 
 
 def _compute_sha256(file_path: str) -> str:
-    sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
+    last_error: PermissionError | None = None
+    for _ in range(10):
+        try:
+            sha256 = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    sha256.update(chunk)
+            return sha256.hexdigest()
+        except PermissionError as exc:
+            last_error = exc
+            time.sleep(0.1)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Unable to compute SHA-256 for {file_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +252,5 @@ def generate_certificate_batch(
         )
         for student_id in student_ids
     ]
+
+
