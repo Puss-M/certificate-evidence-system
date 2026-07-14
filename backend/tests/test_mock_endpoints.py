@@ -35,15 +35,5 @@ def test_certificates_endpoint_returns_required_fields() -> None:
     assert certificate["status"] == "VALID"
 
 
-def test_verification_endpoint_returns_pass_result() -> None:
-    data = asyncio.run(get_json("/api/verification/CERT-20260714-0001"))
-
-    assert data["code"] == 0
-    assert data["data"]["result"] == "PASS"
-
-
-def test_verification_endpoint_returns_hash_mismatch_result() -> None:
-    data = asyncio.run(get_json("/api/verification/CERT-HASH-MISMATCH"))
-
-    assert data["code"] == 0
-    assert data["data"]["result"] == "HASH_MISMATCH"
+# /api/verification 的测试挪到 tests/test_verification.py 了——那个接口现在是
+# 真实数据库读写，不再是mock数据，用的是 conftest.py 里的 db_session fixture。
