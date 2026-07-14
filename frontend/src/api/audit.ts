@@ -1,0 +1,3 @@
+import request from '@/utils/request'; import type { AuditLog, PageQuery, PageResult } from '@/types'; import { auditLogs, pageOf, useMock, wait } from './mock'; import { camelize, snakeize } from './helpers'
+export async function getAuditLogs(query:PageQuery):Promise<PageResult<AuditLog>>{if(useMock){await wait();return pageOf(auditLogs,query)}return camelize(await request.get('/admin/audit-logs',{params:snakeize(query)}))}
+export async function getAuditLog(id:number):Promise<AuditLog>{if(useMock){await wait();return auditLogs.find(x=>x.id===id)!}return camelize(await request.get(`/admin/audit-logs/${id}`))}
