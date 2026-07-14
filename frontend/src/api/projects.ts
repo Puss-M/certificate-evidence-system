@@ -1,0 +1,5 @@
+import request from '@/utils/request'; import type { PageQuery, PageResult, Project } from '@/types'; import { pageOf, projects, useMock, wait } from './mock'; import { camelize, snakeize } from './helpers'
+export async function getProjects(query: PageQuery): Promise<PageResult<Project>> { if(useMock){await wait();return pageOf(projects,query)} return camelize(await request.get('/admin/projects',{params:snakeize(query)})) }
+export async function createProject(data: Omit<Project,'id'>){if(useMock){await wait();projects.unshift({...data,id:Date.now()});return} await request.post('/admin/projects',snakeize(data))}
+export async function updateProject(id:number,data:Partial<Project>){if(useMock){await wait();Object.assign(projects.find(x=>x.id===id)||{},data);return} await request.put(`/admin/projects/${id}`,snakeize(data))}
+export async function deleteProject(id:number){if(useMock){await wait();projects.splice(projects.findIndex(x=>x.id===id),1);return} await request.delete(`/admin/projects/${id}`)}

@@ -1,0 +1,5 @@
+import request from '@/utils/request'; import type { ChainRecord, PageQuery, PageResult } from '@/types'; import { pageOf, receipts, useMock, wait } from './mock'; import { snakeize } from './helpers'
+export async function getReceipts(query:PageQuery):Promise<PageResult<ChainRecord>>{if(useMock){await wait();return pageOf(receipts,query)}return await request.get('/admin/evidence/receipts',{params:snakeize(query)})}
+export async function getReceipt(receipt_id:string):Promise<ChainRecord>{if(useMock){await wait();return receipts.find(x=>x.receipt_id===receipt_id)!}return await request.get(`/admin/evidence/receipts/${receipt_id}`)}
+export async function refreshReceipt(receipt_id:string):Promise<ChainRecord>{return getReceipt(receipt_id)}
+export async function checkIntegrity():Promise<{valid:boolean;message:string;brokenHeight?:number}>{if(useMock){await wait();return{valid:true,message:'本地哈希链完整性校验通过'}}return await request.get('/admin/evidence/integrity')}
