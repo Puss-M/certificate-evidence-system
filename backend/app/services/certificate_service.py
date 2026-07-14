@@ -33,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import qrcode
 
-from app.models.certificate import Certificate
+from app.models.certificate import Certificate, CertificateStatus
 from app.models.evidence_receipt import EvidenceReceipt
 from app.models.student import Student
 
@@ -187,14 +187,27 @@ def _create_evidence_receipt(db: Session, certificate_id: int, certificate_no: s
 # ---------------------------------------------------------------------------
 # 单张证书生成的完整流程：编号 -> 二维码 -> PDF -> 哈希 -> 存证回执 -> 写入数据库
 # ---------------------------------------------------------------------------
+def _normalise_int_id(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _normalise_template_id(template: dict) -> int | None:
+    return _normalise_int_id(template.get("template_id"))
+
+
 def generate_certificate(
     db: Session,
     *,
     student_id: int,
     template: dict,
     issue_date: datetime,
-    batch_id: str | None = None,
+    batch_id: int | str | None = None,
     output_dir: Path | None = None,
+    previous_certificate_no: str | None = None,
 ) -> Certificate:
     student = db.get(Student, student_id)
     if student is None:
@@ -230,14 +243,17 @@ def generate_certificate(
             certificate_no=certificate_no,
             student_id=student.student_id,
             student_name=student.student_name,
-            batch_id=batch_id,
-            template_id=template.get("template_code"),
+            batch_id=_normalise_int_id(batch_id),
+            template_id=_normalise_template_id(template),
+            project_name=template.get("project_name") or "软件开发实训",
+            issue_time=issue_date,
             pdf_path=os.path.relpath(final_pdf_path, start=PROJECT_ROOT),
             certificate_hash=certificate_hash,
             qr_code_path=os.path.relpath(final_qr_path, start=PROJECT_ROOT),
             verify_url=verify_url,
-            status="VALID",
+            status=CertificateStatus.VALID.value,
             credential_type="CERTIFICATE",
+            previous_certificate_no=previous_certificate_no,
         )
 
         try:
@@ -285,7 +301,7 @@ def generate_certificate_batch(
     student_ids: list[int],
     template: dict,
     issue_date: datetime,
-    batch_id: str,
+    batch_id: int | str | None,
     output_dir: Path | None = None,
 ) -> list[Certificate]:
     return [
