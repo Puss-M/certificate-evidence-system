@@ -13,7 +13,7 @@ request.interceptors.response.use(
   (response) => {
     const body = response.data as ApiResponse<unknown>
     if (body && typeof body.code === 'number') {
-      if (body.code !== 0 && body.code !== 200) {
+      if (body.code !== 0) {
         ElMessage.error(body.message || '请求失败')
         return Promise.reject(new Error(body.message || '请求失败'))
       }
