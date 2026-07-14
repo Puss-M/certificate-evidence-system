@@ -22,6 +22,13 @@ from app.models.certificate import Certificate
 from app.schemas.verification import VerificationResult
 
 
+INVALID_STATUS_MESSAGES = {
+    "REVOKED": "Certificate has been revoked.",
+    "REISSUED": "Certificate has been reissued.",
+    "EXPIRED": "Certificate has expired.",
+}
+
+
 def _find_certificate(db: Session, certificate_no: str) -> Certificate | None:
     return db.query(Certificate).filter(
         Certificate.certificate_no == certificate_no
@@ -40,15 +47,15 @@ def verify_by_certificate_no(db: Session, certificate_no: str) -> VerificationRe
                 message="Certificate number does not exist.",
             )
 
-        if certificate.status == "REVOKED":
+        if certificate.status in INVALID_STATUS_MESSAGES:
             return VerificationResult(
-                result="REVOKED",
+                result=certificate.status,
                 certificate_no=certificate_no,
                 student_name=certificate.student_name,
                 certificate_hash=certificate.certificate_hash,
                 receipt_id=certificate.receipt_id,
                 status=certificate.status,
-                message="Certificate has been revoked.",
+                message=INVALID_STATUS_MESSAGES[certificate.status],
             )
 
         if not certificate.receipt_id or not certificate.certificate_hash:
@@ -89,15 +96,15 @@ def verify_by_file(db: Session, certificate_no: str, file_bytes: bytes) -> Verif
                 message="Certificate number does not exist.",
             )
 
-        if certificate.status == "REVOKED":
+        if certificate.status in INVALID_STATUS_MESSAGES:
             return VerificationResult(
-                result="REVOKED",
+                result=certificate.status,
                 certificate_no=certificate_no,
                 student_name=certificate.student_name,
                 certificate_hash=certificate.certificate_hash,
                 receipt_id=certificate.receipt_id,
                 status=certificate.status,
-                message="Certificate has been revoked.",
+                message=INVALID_STATUS_MESSAGES[certificate.status],
             )
 
         if not certificate.receipt_id or not certificate.certificate_hash:

@@ -1,6 +1,6 @@
 # FastAPI 后端
 
-本目录是证书存证系统的 FastAPI 后端工程，负责基础业务接口、MySQL 连接、统一返回格式、公共验真 mock 接口，以及后续证书存证业务对接。
+本目录是证书存证系统的 FastAPI 后端工程，负责基础业务接口、MySQL 连接、统一返回格式、公共验真、证书生成、本地哈希链存证，以及管理员前端接口对接。
 
 ## 已完成内容
 
@@ -13,17 +13,20 @@
 - 核心表结构草案
 - 学生列表接口
 - 证书列表接口
-- 公共验真 mock 接口
+- 公共验真接口
+- 证书生成与本地哈希链回执
+- 管理员前端联调接口
+- 撤销、补发接口骨架
 - 接口自动化测试
 
 ## 本地启动方式
 
 以下命令都在 `backend` 目录执行。
 
-先启动 MySQL：
+先启动 MySQL。下面是命令格式，`<MYSQL_HOME>` 和 `<MYSQL_DATA_DIR>` 按本机实际路径替换，不要把真实路径和密码提交到仓库：
 
 ```powershell
-"D:\Software\MySQL\8.4\bin\mysqld.exe" --defaults-file="D:\code\_mysql_certificate_evidence\my.ini" --console
+"<MYSQL_HOME>\bin\mysqld.exe" --defaults-file="<MYSQL_DATA_DIR>\my.ini" --console
 ```
 
 再启动 FastAPI：
@@ -46,6 +49,14 @@ http://127.0.0.1:8000/docs
 .\.venv\Scripts\python.exe -m scripts.create_tables
 ```
 
+如果本机以前已经创建过旧表，需要补齐 `certificates` 和 `revocation_records` 的新增字段，可执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.upgrade_certificate_schema
+```
+
+该脚本只补缺失列，不删除表、不清空数据。
+
 当前表结构草案：
 
 - `students`
@@ -63,13 +74,27 @@ http://127.0.0.1:8000/docs
 - `GET /api/students`
 - `GET /api/certificates`
 - `GET /api/verification/{certificate_no}`
+- `POST /api/verification/{certificate_no}/file`
+- `POST /api/auth/login`
+- `GET /api/admin/dashboard/statistics`
+- `GET /api/admin/students`
+- `GET /api/admin/templates`
+- `GET /api/admin/certificate-batches`
+- `GET /api/admin/certificates`
+- `POST /api/admin/certificate-batches/{batch_id}/issue`
+- `POST /api/admin/certificates/{certificate_id}/evidence`
+- `POST /api/admin/certificate-batches/{batch_id}/evidence`
+- `POST /api/admin/certificates/{certificate_id}/revoke`
+- `POST /api/admin/certificates/{certificate_id}/reissue`
+- `GET /api/admin/evidence/receipts`
+- `GET /api/admin/evidence/integrity`
+- `GET /api/admin/audit-logs`
 
-公共验真 mock 示例：
+公共验真说明：
 
-- `CERT-20260714-0001` -> `PASS`
-- `CERT-20260714-0002` -> `REVOKED`
-- `CERT-HASH-MISMATCH` -> `HASH_MISMATCH`
-- `CERT-NOT-EXIST` -> `NOT_FOUND`
+- 编号验真：查询证书是否存在、状态是否有效、是否有存证回执。
+- 上传 PDF 复验：现场计算上传文件 SHA-256，并和数据库保存的 `certificate_hash` 比对。
+- 结果状态包括：`PASS`、`REVOKED`、`REISSUED`、`HASH_MISMATCH`、`NOT_FOUND`、`NO_RECEIPT`、`SYSTEM_ERROR`。
 
 ## 测试
 
@@ -82,7 +107,7 @@ http://127.0.0.1:8000/docs
 当前测试结果：
 
 ```text
-5 passed
+15 passed
 ```
 
 ## 安全说明
@@ -97,3 +122,5 @@ http://127.0.0.1:8000/docs
 - 真实学生数据
 
 只能提交 `.env.example`。当前 mock 数据使用测试学生和测试证书编号，不包含真实个人信息。
+
+`admin / 123456` 仅用于本地演示登录和前端路由联调，不是生产账号方案。正式账号系统需要接入 `users` 表、密码哈希和 JWT 鉴权。
