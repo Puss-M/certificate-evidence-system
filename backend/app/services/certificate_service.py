@@ -10,6 +10,9 @@
 - 每次生成都会往 certificates 表插入一行证书记录、往 evidence_receipts 表插入一行回执记录，
   两者通过 certificate_id（外键）关联，Certificate.receipt_id 存的是回执的业务编号
   （evidence_receipts.receipt_no），不是回执表的自增主键，这一点容易搞混，多留意。
+- 证书编号、回执的 block_height 都是"先查最大值再+1"，并发下两个请求可能读到同一个
+  最大值、算出同一个编号——这种情况数据库的唯一约束会挡住其中一个，报 IntegrityError，
+  不会导致编号重复或哈希链错乱。generate_certificate() 会在这种冲突下自动重试。
 
 不包含：Merkle Root（P2 加分项，另有方案文档，这里先不接）。
 """
@@ -17,6 +20,7 @@
 import hashlib
 import os
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +29,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import qrcode
 
@@ -42,6 +47,9 @@ DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "certificates"
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
 VERIFY_BASE_URL = "https://cert-evidence-system.local/verify"  # 演示用占位域名，部署时替换
+
+# 证书编号 / 回执 block_height 是"查最大值+1"，并发冲突时靠重试解决，这是重试上限
+MAX_GENERATE_ATTEMPTS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -64,19 +72,17 @@ def _next_certificate_no(db: Session, issue_date: datetime) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 二维码 + PDF 生成，逻辑和原型脚本完全一致（先出二维码、再画进PDF、最后对成品PDF算哈希）
+# 二维码 + PDF 生成。这两个函数现在只管"往指定路径写文件"，具体用什么文件名
+# 由调用方（generate_certificate）决定——生成阶段用临时文件名，落库成功后
+# 才改名成正式的 {certificate_no} 文件名，原因见 generate_certificate 里的注释。
 # ---------------------------------------------------------------------------
-def _generate_qrcode(certificate_no: str, output_dir: Path) -> tuple[str, str]:
-    verify_url = f"{VERIFY_BASE_URL}/{certificate_no}"
-    qr_path = output_dir / f"{certificate_no}_qrcode.png"
+def _generate_qrcode(verify_url: str, qr_path: Path) -> None:
     img = qrcode.make(verify_url)
     img.save(qr_path)
-    return str(qr_path), verify_url
 
 
 def _generate_pdf(certificate_no: str, student: Student, template: dict,
-                   issue_date: datetime, qr_code_path: str, output_dir: Path) -> str:
-    pdf_path = output_dir / f"{certificate_no}.pdf"
+                   issue_date: datetime, qr_code_path: Path, pdf_path: Path) -> None:
     c = canvas.Canvas(str(pdf_path), pagesize=A4)
     width, height = A4
 
@@ -101,7 +107,7 @@ def _generate_pdf(certificate_no: str, student: Student, template: dict,
 
     qr_size = 62
     c.drawImage(
-        qr_code_path,
+        str(qr_code_path),
         width - qr_size - 60,
         50,
         width=qr_size,
@@ -118,7 +124,6 @@ def _generate_pdf(certificate_no: str, student: Student, template: dict,
 
     c.showPage()
     c.save()
-    return str(pdf_path)
 
 
 def _compute_sha256(file_path: str) -> str:
@@ -198,34 +203,72 @@ def generate_certificate(
     target_dir = output_dir or DEFAULT_OUTPUT_DIR
     os.makedirs(target_dir, exist_ok=True)
 
-    certificate_no = _next_certificate_no(db, issue_date)
+    last_error: IntegrityError | None = None
 
-    qr_code_path, verify_url = _generate_qrcode(certificate_no, target_dir)
-    pdf_path = _generate_pdf(certificate_no, student, template, issue_date, qr_code_path, target_dir)
-    certificate_hash = _compute_sha256(pdf_path)
+    for _ in range(MAX_GENERATE_ATTEMPTS):
+        certificate_no = _next_certificate_no(db, issue_date)
+        verify_url = f"{VERIFY_BASE_URL}/{certificate_no}"
 
-    certificate = Certificate(
-        certificate_no=certificate_no,
-        student_id=student.student_id,
-        student_name=student.student_name,
-        batch_id=batch_id,
-        template_id=template.get("template_code"),
-        pdf_path=os.path.relpath(pdf_path, start=PROJECT_ROOT),
-        certificate_hash=certificate_hash,
-        qr_code_path=os.path.relpath(qr_code_path, start=PROJECT_ROOT),
-        verify_url=verify_url,
-        status="VALID",
-        credential_type="CERTIFICATE",
-    )
-    db.add(certificate)
-    db.flush()  # 拿到 certificate.certificate_id，供回执表外键关联
+        # 先写到跟 certificate_no 无关的临时文件名，落库成功后才改名成正式的
+        # {certificate_no} 文件名。这一点很关键：如果直接用 certificate_no 当
+        # 文件名生成，一旦这次因为并发冲突要重试，这次生成的文件会和"已经赢了
+        # 这个编号"的那次证书同名，重试时的 PDF 内容会把对方的文件覆盖掉，
+        # 失败后再删除又会把对方刚生成好的文件一起删掉——用临时文件名可以完全
+        # 避免这种"重试把别人的证书文件冲掉"的情况。
+        temp_token = uuid.uuid4().hex[:8]
+        temp_qr_path = target_dir / f".tmp-{temp_token}-qrcode.png"
+        temp_pdf_path = target_dir / f".tmp-{temp_token}.pdf"
 
-    receipt = _create_evidence_receipt(db, certificate.certificate_id, certificate_no, certificate_hash)
-    certificate.receipt_id = receipt.receipt_no  # 存的是回执业务编号，不是回执表自增主键
+        _generate_qrcode(verify_url, temp_qr_path)
+        _generate_pdf(certificate_no, student, template, issue_date, temp_qr_path, temp_pdf_path)
+        certificate_hash = _compute_sha256(str(temp_pdf_path))
 
-    db.commit()
-    db.refresh(certificate)
-    return certificate
+        final_qr_path = target_dir / f"{certificate_no}_qrcode.png"
+        final_pdf_path = target_dir / f"{certificate_no}.pdf"
+
+        certificate = Certificate(
+            certificate_no=certificate_no,
+            student_id=student.student_id,
+            student_name=student.student_name,
+            batch_id=batch_id,
+            template_id=template.get("template_code"),
+            pdf_path=os.path.relpath(final_pdf_path, start=PROJECT_ROOT),
+            certificate_hash=certificate_hash,
+            qr_code_path=os.path.relpath(final_qr_path, start=PROJECT_ROOT),
+            verify_url=verify_url,
+            status="VALID",
+            credential_type="CERTIFICATE",
+        )
+
+        try:
+            db.add(certificate)
+            db.flush()  # 拿到 certificate.certificate_id，供回执表外键关联
+
+            receipt = _create_evidence_receipt(db, certificate.certificate_id, certificate_no, certificate_hash)
+            certificate.receipt_id = receipt.receipt_no  # 存的是回执业务编号，不是回执表自增主键
+
+            db.commit()
+            db.refresh(certificate)
+
+            # 落库成功、编号确定不会再跟别人冲突之后，才把临时文件改名成正式文件名
+            temp_pdf_path.rename(final_pdf_path)
+            temp_qr_path.rename(final_qr_path)
+
+            return certificate
+        except IntegrityError as exc:
+            # 并发下两个请求可能算出同一个 certificate_no 或同一个 block_height，
+            # 数据库唯一约束会挡住其中一个——回滚、丢掉这次生成的临时文件，换个号重试。
+            db.rollback()
+            last_error = exc
+            for stray_path in (temp_pdf_path, temp_qr_path):
+                try:
+                    stray_path.unlink(missing_ok=True)
+                except OSError:
+                    pass  # 清理失败不影响重试，最多留一份没被数据库引用的临时文件
+
+    raise RuntimeError(
+        f"生成证书失败：并发冲突重试 {MAX_GENERATE_ATTEMPTS} 次仍未成功"
+    ) from last_error
 
 
 # ---------------------------------------------------------------------------
