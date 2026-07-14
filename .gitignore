@@ -65,3 +65,8 @@ qrcodes/
 ~$*.docx
 ~$*.xlsx
 ~$*.pptx
+
+# Local Remix experiment materials not for repository
+/docs/协作管理/2026-07-14_Remix上链实验跟做记录.md
+/docs/原始材料/实验 Remix-智能合约部署202502_YC (1).docx
+/docs/过程文档/Remix智能合约部署实验_提取文本.txt
