@@ -252,5 +252,3 @@ def generate_certificate_batch(
         )
         for student_id in student_ids
     ]
-
-
