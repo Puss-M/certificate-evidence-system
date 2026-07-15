@@ -3,6 +3,7 @@
 Thumbs.db
 .vscode/
 .idea/
+.worktrees/
 *.swp
 *.swo
 
@@ -43,6 +44,7 @@ coverage/
 # Python helpers
 __pycache__/
 *.py[cod]
+.ruff_cache/
 .venv/
 venv/
 pytest-cache-files-*/
