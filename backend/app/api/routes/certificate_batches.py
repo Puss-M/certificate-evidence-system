@@ -30,8 +30,9 @@ from app.schemas.batch import (
     EvidenceBatchResult,
     GenerateFailure,
     GenerateResult,
+    MerkleRootResult,
 )
-from app.services import certificate_service
+from app.services import certificate_service, merkle_service
 
 router = APIRouter(prefix="/admin/batches")
 
@@ -341,5 +342,44 @@ def evidence_batch(
             receipt_ids=receipt_ids,
             evidenced=len(receipt_ids),
             newly_evidenced=evidenced_count,
+        )
+    )
+
+
+@router.post("/{batch_id}/merkle-root", response_model=ApiResponse[MerkleRootResult])
+def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[MerkleRootResult]:
+    """
+    Merkle Root（P2加分项，FISCO_BCOS与存证降级策略.md第8节 / 数据库设计.md第9节）：
+    本地哈希链之上叠加的一层，把批次内所有证书哈希汇总成一个Root，为以后接测试链
+    做准备（如果接了测试链，一个批次只需要写一笔交易，不是逐张证书上链）。
+
+    单独开一个路由、不塞进上面的evidence_batch()里，是为了不改动4号那边已经跑通
+    的存证主流程——这一步失败（比如批次里还有证书没生成完）不会影响evidence_batch
+    已经做完的事，符合降级策略里"Root是可选叠加层，不能阻塞P0主线"的要求。
+    """
+    try:
+        root_record = merkle_service.compute_batch_root(db, batch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    db.add(
+        AuditLog(
+            action="批次Merkle Root生成",
+            target_type="证书管理",
+            target_id=root_record.root_no,
+            operator="admin",
+            detail=f"批次batch_id={batch_id}生成Root，包含{root_record.leaf_count}张证书",
+        )
+    )
+    db.commit()
+
+    return ApiResponse.success(
+        MerkleRootResult(
+            batch_id=batch_id,
+            root_no=root_record.root_no,
+            merkle_root=root_record.merkle_root,
+            previous_root_hash=root_record.previous_root_hash,
+            current_root_hash=root_record.current_root_hash,
+            leaf_count=root_record.leaf_count,
         )
     )
