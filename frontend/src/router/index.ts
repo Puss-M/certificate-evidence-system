@@ -5,6 +5,11 @@ import type { Role } from '@/types'
 const ADMIN_TEACHER: Role[] = ['ADMIN','TEACHER']
 const router=createRouter({history:createWebHistory(),routes:[
  {path:'/login',component:()=>import('@/views/LoginView.vue'),meta:{public:true,title:'登录'}},
+ {path:'/student',component:()=>import('@/views/student/StudentCenterView.vue'),meta:{public:true,title:'学生中心'}},
+ {path:'/student/certificates',component:()=>import('@/views/student/MyCertificatesView.vue'),meta:{public:true,title:'我的证书'}},
+ {path:'/student/certificates/:certificateNo',component:()=>import('@/views/student/StudentCertificateDetailView.vue'),meta:{public:true,title:'证书详情'}},
+ {path:'/public/verify',component:()=>import('@/views/public/PublicVerifyView.vue'),meta:{public:true,title:'证书验真'}},
+ {path:'/public/verify/:certificateNo',component:()=>import('@/views/public/PublicVerifyView.vue'),meta:{public:true,title:'证书验真'}},
  {path:'/',component:AdminLayout,redirect:'/dashboard',children:[
   {path:'dashboard',component:()=>import('@/views/DashboardView.vue'),meta:{title:'后台首页',roles:['ADMIN']}},
   {path:'projects',component:()=>import('@/views/ProjectsView.vue'),meta:{title:'实训项目管理',roles:ADMIN_TEACHER}},

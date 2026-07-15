@@ -80,6 +80,10 @@ http://127.0.0.1:8000/docs
 - `GET /api/health/db`
 - `GET /api/students`
 - `GET /api/certificates`
+- `GET /api/student/certificates`
+- `GET /api/student/certificates/{certificate_no}`
+- `GET /api/student/certificates/{certificate_no}/download`
+- `GET /api/student/certificates/{certificate_no}/qrcode`
 - `GET /api/verification/{certificate_no}`
 - `POST /api/verification/{certificate_no}/file`
 - `POST /api/auth/login`
