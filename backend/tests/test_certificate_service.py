@@ -22,6 +22,19 @@ TEMPLATE = {
 ISSUE_DATE = datetime(2026, 7, 14)
 
 
+def test_build_verify_url_uses_configured_public_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(
+        certificate_service.settings,
+        "public_verify_base_url",
+        "http://127.0.0.1:8000/api/verification/",
+    )
+
+    assert (
+        certificate_service._build_verify_url("CERT-20260715-0001")
+        == "http://127.0.0.1:8000/api/verification/CERT-20260715-0001"
+    )
+
+
 def test_generate_certificate_retries_on_certificate_no_collision(db_session) -> None:
     student1 = Student(student_no="2023001", student_name="张三", class_name="1班", major_name="软件工程")
     student2 = Student(student_no="2023002", student_name="李四", class_name="1班", major_name="软件工程")

@@ -35,6 +35,10 @@
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
+二维码默认指向本机公共验真接口。若需要用手机在同一局域网扫码，可仅在本机 `.env`
+设置 `PUBLIC_VERIFY_BASE_URL=http://<局域网IP>:8000/api/verification`，重启 FastAPI 后
+重新生成演示证书；不要把局域网地址或 `.env` 提交到仓库。
+
 Swagger 接口文档地址：
 
 ```text
@@ -49,7 +53,8 @@ http://127.0.0.1:8000/docs
 .\.venv\Scripts\python.exe -m scripts.create_tables
 ```
 
-如果本机以前已经创建过旧表，需要补齐 `certificates` 和 `revocation_records` 的新增字段，可执行：
+如果本机以前已经创建过旧表，需要补齐 `certificates`、`certificate_batches` 和
+`revocation_records` 的新增字段，可执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.upgrade_certificate_schema
@@ -79,12 +84,13 @@ http://127.0.0.1:8000/docs
 - `GET /api/admin/dashboard/statistics`
 - `GET /api/admin/students`
 - `GET /api/admin/templates`
-- `GET /api/admin/certificate-batches`
+- `GET/POST/PUT/DELETE /api/admin/batches`
+- `POST /api/admin/batches/{batch_id}/generate`
+- `POST /api/admin/batches/{batch_id}/evidence`
+- `GET /api/admin/certificate-batches`（兼容旧调用）
 - `GET /api/admin/certificates`
-- `POST /api/admin/certificate-batches/{batch_id}/issue`
 - `POST /api/admin/certificates/{certificate_id}/evidence`
-- `POST /api/admin/certificate-batches/{batch_id}/evidence`
-- `POST /api/admin/certificates/{certificate_id}/revoke`
+- `POST /api/admin/certificates/{certificate_identifier}/revoke`
 - `POST /api/admin/certificates/{certificate_id}/reissue`
 - `GET /api/admin/evidence/receipts`
 - `GET /api/admin/evidence/integrity`
@@ -107,8 +113,20 @@ http://127.0.0.1:8000/docs
 当前测试结果：
 
 ```text
-15 passed
+37 passed
 ```
+
+## 前后端关键字段
+
+| 字段 | 含义 | 联调说明 |
+| --- | --- | --- |
+| `certificate_hash` | 最终 PDF 的 SHA-256 | 上传 PDF 复验时与现场计算值比对。 |
+| `receipt_id` | 存证回执业务编号 | 对应 `evidence_receipts.receipt_no`，不是表自增主键。 |
+| `status` | 证书生命周期状态 | 常用值：`DRAFT`、`VALID`、`REVOKED`、`REISSUED`。 |
+| `evidence_status` | 管理端展示的存证状态 | 有回执时为 `CONFIRMED`，无回执时为 `PENDING`。 |
+
+`GET /api/verification/{certificate_no}` 用于编号或扫码验真；
+`POST /api/verification/{certificate_no}/file` 用于上传 PDF 的 SHA-256 强校验。
 
 ## 安全说明
 

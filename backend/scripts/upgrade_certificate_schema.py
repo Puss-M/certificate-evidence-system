@@ -40,6 +40,25 @@ def main() -> None:
     )
     _add_column_if_missing("certificates", "updated_at", "updated_at DATETIME NULL")
 
+    if _column_names("certificate_batches"):
+        # These fields were added after the initial batch table was created.
+        # Keep them nullable so existing batches remain usable after upgrade.
+        _add_column_if_missing(
+            "certificate_batches",
+            "project_name",
+            "project_name VARCHAR(200) NULL",
+        )
+        _add_column_if_missing(
+            "certificate_batches",
+            "template_id",
+            "template_id INT NULL",
+        )
+        _add_column_if_missing(
+            "certificate_batches",
+            "student_ids",
+            "student_ids JSON NULL",
+        )
+
     if _column_names("revocation_records"):
         _add_column_if_missing(
             "revocation_records",

@@ -36,6 +36,7 @@ import qrcode
 from app.models.certificate import Certificate, CertificateStatus
 from app.models.evidence_receipt import EvidenceReceipt
 from app.models.student import Student
+from app.core.config import settings
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,10 @@ VERIFY_BASE_URL = "https://cert-evidence-system.local/verify"  # 演示用占位
 
 # 证书编号 / 回执 block_height 是"查最大值+1"，并发冲突时靠重试解决，这是重试上限
 MAX_GENERATE_ATTEMPTS = 5
+
+
+def _build_verify_url(certificate_no: str) -> str:
+    return f"{settings.public_verify_base_url.rstrip('/')}/{certificate_no}"
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +225,7 @@ def generate_certificate(
 
     for _ in range(MAX_GENERATE_ATTEMPTS):
         certificate_no = _next_certificate_no(db, issue_date)
-        verify_url = f"{VERIFY_BASE_URL}/{certificate_no}"
+        verify_url = _build_verify_url(certificate_no)
 
         # 先写到跟 certificate_no 无关的临时文件名，落库成功后才改名成正式的
         # {certificate_no} 文件名。这一点很关键：如果直接用 certificate_no 当
