@@ -54,7 +54,7 @@ http://127.0.0.1:8000/docs
 .\.venv\Scripts\python.exe -m scripts.create_tables
 ```
 
-如果本机以前已经创建过旧表，需要补齐业务表新增字段和 Merkle 表，可执行：
+如果本机以前已经创建过旧表，需要补齐业务表新增字段（包括 `students.college`）和 Merkle 表，可执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.upgrade_certificate_schema
@@ -123,7 +123,7 @@ http://127.0.0.1:8000/docs
 当前测试结果：
 
 ```text
-60 passed
+64 passed
 ```
 
 ## 前后端关键字段

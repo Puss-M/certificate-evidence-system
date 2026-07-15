@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.responses import ApiResponse
@@ -140,7 +140,7 @@ DEMO_AUDIT_LOGS: list[dict[str, Any]] = [
 class StudentPayload(BaseModel):
     student_no: str | None = None
     student_name: str | None = None
-    college: str | None = None
+    college: str | None = Field(default=None, max_length=100)
     major: str | None = None
     major_name: str | None = None
     class_name: str | None = None

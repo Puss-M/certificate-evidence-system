@@ -12,7 +12,7 @@ class Student(Base):
     student_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     student_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     student_name: Mapped[str] = mapped_column(String(64))
-    college: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    college: Mapped[str | None] = mapped_column(String(100), nullable=True)
     class_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     major_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -23,6 +23,12 @@ async def request_json(method: str, path: str, **kwargs) -> dict:
     return response.json()
 
 
+async def request_response(method: str, path: str, **kwargs) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.request(method, path, **kwargs)
+
+
 def test_admin_login_matches_frontend_contract() -> None:
     data = asyncio.run(
         request_json("POST", "/api/auth/login", json={"username": "admin", "password": "123456"})
@@ -81,6 +87,24 @@ def test_admin_student_college_is_created_and_updated(db_session) -> None:
 
     assert updated["data"]["college"] == "人工智能学院"
     assert db_session.get(Student, student_id).college == "人工智能学院"
+
+
+def test_admin_student_rejects_overlong_college(db_session) -> None:
+    response = asyncio.run(
+        request_response(
+            "POST",
+            "/api/admin/students",
+            json={
+                "student_no": "S20260006",
+                "student_name": "Demo Student F",
+                "college": "学" * 101,
+            },
+        )
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == 422
+    assert db_session.query(Student).filter_by(student_no="S20260006").one_or_none() is None
 
 
 def test_admin_frontend_page_endpoints_are_available(db_session) -> None:

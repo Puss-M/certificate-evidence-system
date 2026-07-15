@@ -91,7 +91,7 @@ def main() -> None:
         _add_column_if_missing("certificates", "updated_at", "updated_at DATETIME NULL")
 
     if _column_names("students"):
-        _add_column_if_missing("students", "college", "college VARCHAR(128) NULL")
+        _add_column_if_missing("students", "college", "college VARCHAR(100) NULL")
 
     if _column_names("certificate_batches"):
         # These fields were added after the initial batch table was created.
@@ -124,22 +124,23 @@ def main() -> None:
             "new_certificate_no VARCHAR(80) NULL",
         )
 
-    _create_merkle_tables_if_missing()
-    _add_column_if_missing(
-        "credential_roots",
-        "leaf_order_rule",
-        "leaf_order_rule VARCHAR(32) NOT NULL DEFAULT 'CERTIFICATE_NO_ASC'",
-    )
-    _create_unique_index_if_missing(
-        "credential_roots",
-        "uq_credential_roots_batch_id",
-        ("batch_id",),
-    )
-    _create_unique_index_if_missing(
-        "merkle_tree_nodes",
-        "uq_merkle_tree_nodes_position",
-        ("root_id", "level", "position_in_level"),
-    )
+    if _column_names("certificate_batches"):
+        _create_merkle_tables_if_missing()
+        _add_column_if_missing(
+            "credential_roots",
+            "leaf_order_rule",
+            "leaf_order_rule VARCHAR(32) NOT NULL DEFAULT 'CERTIFICATE_NO_ASC'",
+        )
+        _create_unique_index_if_missing(
+            "credential_roots",
+            "uq_credential_roots_batch_id",
+            ("batch_id",),
+        )
+        _create_unique_index_if_missing(
+            "merkle_tree_nodes",
+            "uq_merkle_tree_nodes_position",
+            ("root_id", "level", "position_in_level"),
+        )
 
     if _column_names("certificates"):
         with engine.begin() as connection:

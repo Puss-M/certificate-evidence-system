@@ -105,3 +105,17 @@ def test_import_students_supports_english_headers(db_session) -> None:
     data = response.json()["data"]
     assert data["success_count"] == 1
     assert db_session.query(Student).filter_by(student_no="2023301").one().college == "计算机学院"
+
+
+def test_import_students_rejects_overlong_college_without_saving_student(db_session) -> None:
+    content = _build_excel(
+        [("2023401", "超长学院测试", "学" * 101, "3班", "软件工程")]
+    )
+
+    response = asyncio.run(_post_import(content))
+    data = response.json()["data"]
+
+    assert data["success_count"] == 0
+    assert data["failed_count"] == 1
+    assert data["failures"][0]["reason"] == "学院名称不能超过100个字符"
+    assert db_session.query(Student).filter_by(student_no="2023401").one_or_none() is None

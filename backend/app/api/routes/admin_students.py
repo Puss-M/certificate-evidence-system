@@ -97,11 +97,15 @@ async def import_students(
         class_name = row[column_index["class_name"]] if "class_name" in column_index else None
         major_name = row[column_index["major_name"]] if "major_name" in column_index else None
         college = row[column_index["college"]] if "college" in column_index else None
+        college_text = str(college).strip() if college is not None else None
+        if college_text and len(college_text) > 100:
+            failures.append(ImportFailure(row=row_number, reason="学院名称不能超过100个字符"))
+            continue
 
         student = Student(
             student_no=student_no,
             student_name=student_name,
-            college=str(college).strip() if college else None,
+            college=college_text or None,
             class_name=str(class_name).strip() if class_name else None,
             major_name=str(major_name).strip() if major_name else None,
         )

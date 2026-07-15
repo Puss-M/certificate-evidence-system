@@ -109,3 +109,22 @@ def test_unique_index_upgrade_reports_duplicates_without_deleting_rows(
     with engine.connect() as connection:
         row_count = connection.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar_one()
     assert row_count == 2
+
+
+def test_upgrade_adds_college_when_only_students_table_exists(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE students "
+                "(student_id INTEGER, student_no VARCHAR(64), student_name VARCHAR(64))"
+            )
+        )
+
+    monkeypatch.setattr(upgrader, "engine", engine)
+    upgrader.main()
+
+    inspector = inspect(engine)
+    student_columns = {column["name"] for column in inspector.get_columns("students")}
+    assert "college" in student_columns
+    assert "credential_roots" not in inspector.get_table_names()
