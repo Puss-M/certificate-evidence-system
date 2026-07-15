@@ -102,6 +102,25 @@ def test_update_and_delete_batch_match_frontend_routes(db_session) -> None:
     assert delete_resp.json()["data"]["deleted"] is True
 
 
+def test_delete_batch_with_generated_certificates_returns_conflict(db_session) -> None:
+    student = Student(student_no="2023411", student_name="protected batch student")
+    db_session.add(student)
+    db_session.commit()
+    batch_id = asyncio.run(
+        _post_json(
+            "/api/admin/batches",
+            {"batch_name": "protected batch", "student_ids": [student.student_id]},
+        )
+    ).json()["data"]["batch_id"]
+    generate_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/generate"))
+    assert generate_resp.status_code == 200
+
+    delete_resp = asyncio.run(_delete_json(f"/api/admin/batches/{batch_id}"))
+
+    assert delete_resp.status_code == 409
+    assert "证书" in delete_resp.json()["message"]
+
+
 def test_generate_batch_creates_certificate_for_each_stored_student(db_session) -> None:
     student1 = Student(student_no="2023403", student_name="小刚", class_name="1班")
     student2 = Student(student_no="2023404", student_name="小丽", class_name="1班")

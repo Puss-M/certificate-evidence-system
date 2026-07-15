@@ -6,7 +6,7 @@ pytest 测试专用的数据库 fixture。
 SQLite，不依赖本机是否装了 MySQL、也不会污染真实数据库，每个测试函数结束后自动清空。
 """
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -26,6 +26,13 @@ def db_session():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine, "connect")
+    def enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     testing_session_local = sessionmaker(bind=engine)
     session = testing_session_local()
