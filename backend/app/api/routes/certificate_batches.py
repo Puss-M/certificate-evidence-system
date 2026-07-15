@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.responses import ApiResponse
 from app.db.session import get_db
+from app.models.audit_log import AuditLog
 from app.models.certificate import Certificate
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
@@ -262,13 +263,27 @@ def generate_batch(
 
     for student_id in student_ids:
         try:
-            certificate_service.generate_certificate(
+            certificate = certificate_service.generate_certificate(
                 db,
                 student_id=student_id,
                 template=template,
                 issue_date=issue_date,
                 batch_id=batch_id,
             )
+            # 审计日志埋点：字段风格跟4号在admin.py里写撤销/补发日志时保持一致
+            # （action中文短句、target_type固定"证书管理"、target_id用certificate_no、
+            # operator暂时写死"admin"，还没接登录鉴权）。每张证书单独记一条，方便
+            # 以后按certificate_no查"这张证书是什么时候生成的"。
+            db.add(
+                AuditLog(
+                    action="证书生成",
+                    target_type="证书管理",
+                    target_id=certificate.certificate_no,
+                    operator="admin",
+                    detail=f"批次batch_id={batch_id}生成",
+                )
+            )
+            db.commit()
             generated_count += 1
         except (ValueError, RuntimeError) as exc:
             db.rollback()
