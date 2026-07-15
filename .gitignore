@@ -73,3 +73,7 @@ qrcodes/
 /docs/协作管理/2026-07-14_Remix上链实验跟做记录.md
 /docs/原始材料/实验 Remix-智能合约部署202502_YC (1).docx
 /docs/过程文档/Remix智能合约部署实验_提取文本.txt
+
+# 本地链部署产物：每个人本地部署出来的合约地址都不一样，不提交
+/chain/deployment-info.json
+/chain/node_modules/

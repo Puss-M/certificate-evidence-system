@@ -37,4 +37,8 @@ class CredentialRoot(Base):
     # 别的规则留口子，目前只有这一种取值。
     odd_leaf_rule: Mapped[str] = mapped_column(String(32), default="DUPLICATE_LAST")
     leaf_count: Mapped[int] = mapped_column(Integer)
+    # 测试链接入用（P2加分项，见chain_service.py）：写链成功才有值，没配置/失败时
+    # 保持None，不影响本地这条记录本身的完整性——Root在本地已经算好、已经能验证，
+    # 上链只是给它多附加一份"链上回执"。
+    tx_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

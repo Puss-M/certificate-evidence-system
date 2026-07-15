@@ -64,6 +64,9 @@ class MerkleRootResult(BaseModel):
     previous_root_hash: str | None = None
     current_root_hash: str
     leaf_count: int
+    # 测试链接入（P2加分项）：写链成功才有值，没配置/失败保持None，
+    # 前端可以据此判断"要不要展示链上交易哈希这一栏"。
+    tx_hash: str | None = None
 
 
 class EvidenceBatchResult(BaseModel):

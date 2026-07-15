@@ -1,0 +1,9 @@
+{
+  "network": "local",
+  "rpc_url": "http://127.0.0.1:8545",
+  "chain_id": "TODO_运行 python chain/scripts/deploy.py 后自动生成，会写进 chain/deployment-info.json",
+  "contract_name": "CredentialRootRegistry",
+  "contract_address": "TODO_本地部署后自动补全",
+  "deploy_tx_hash": "TODO_本地部署后自动补全",
+  "owner_address": "TODO_本地部署后自动补全"
+}

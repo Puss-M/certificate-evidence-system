@@ -1,0 +1,12 @@
+{
+  "name": "chain",
+  "version": "1.0.0",
+  "description": "本地测试链合约（CredentialRootRegistry），编译产物见 artifacts/，部署用 scripts/deploy.py（Python），不依赖本目录的 node_modules 跑起来",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

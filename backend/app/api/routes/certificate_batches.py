@@ -34,7 +34,7 @@ from app.schemas.batch import (
     GenerateResult,
     MerkleRootResult,
 )
-from app.services import certificate_service, merkle_service
+from app.services import certificate_service, chain_service, merkle_service
 
 router = APIRouter(prefix="/admin/batches")
 logger = logging.getLogger(__name__)
@@ -382,6 +382,31 @@ def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResp
         db.rollback()
         logger.exception("failed to write Merkle Root audit log")
 
+    # 测试链接入（P2加分项）：本地Root已经算好、已经落库，这一步是在这之上
+    # "顺便"写一笔链上交易。chain_service内部保证了没配置/连不上/写入失败都只
+    # 返回None、不抛异常，所以这里不需要try/except——即使这一步完全没跑，
+    # 上面的Root计算结果也已经完整、可用，不受影响。
+    tx_hash = chain_service.record_root_on_chain(
+        root_no=root_record.root_no,
+        batch_id=batch_id,
+        merkle_root=root_record.merkle_root,
+        previous_root_hash=root_record.previous_root_hash,
+        current_root_hash=root_record.current_root_hash,
+    )
+    if tx_hash:
+        root_record.tx_hash = tx_hash
+        db.commit()
+        db.add(
+            AuditLog(
+                action="批次Root上链",
+                target_type="证书管理",
+                target_id=root_record.root_no,
+                operator="admin",
+                detail=f"交易哈希：{tx_hash}",
+            )
+        )
+        db.commit()
+
     return ApiResponse.success(
         MerkleRootResult(
             batch_id=batch_id,
@@ -393,5 +418,6 @@ def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResp
             previous_root_hash=root_record.previous_root_hash,
             current_root_hash=root_record.current_root_hash,
             leaf_count=root_record.leaf_count,
+            tx_hash=root_record.tx_hash,
         )
     )
