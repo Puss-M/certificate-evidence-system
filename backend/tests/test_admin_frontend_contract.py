@@ -129,3 +129,32 @@ def test_admin_issue_endpoint_generates_certificates_for_frontend(db_session) ->
 
     assert data["data"]["success_count"] == 1
     assert data["data"]["failed_count"] == 0
+
+
+def test_admin_revoke_accepts_certificate_no_from_frontend(db_session) -> None:
+    student = Student(
+        student_no="S20260004",
+        student_name="Demo Student D",
+        class_name="Class 1",
+        major_name="Software Engineering",
+    )
+    db_session.add(student)
+    db_session.commit()
+
+    certificate = certificate_service.generate_certificate(
+        db_session,
+        student_id=student.student_id,
+        template=TEMPLATE,
+        issue_date=datetime(2026, 7, 14),
+    )
+
+    data = asyncio.run(
+        request_json(
+            "POST",
+            f"/api/admin/certificates/{certificate.certificate_no}/revoke",
+            json={"reason": "frontend revoke by certificate_no"},
+        )
+    )
+
+    assert data["data"]["certificate_no"] == certificate.certificate_no
+    assert data["data"]["status"] == "REVOKED"

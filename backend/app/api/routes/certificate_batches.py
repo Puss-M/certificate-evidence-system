@@ -24,6 +24,8 @@ from app.models.certificate_template import CertificateTemplate
 from app.schemas.batch import (
     BatchCreate,
     BatchDetail,
+    BatchGeneratePayload,
+    BatchUpdate,
     GenerateFailure,
     GenerateResult,
 )
@@ -99,6 +101,45 @@ def _to_batch_detail(db: Session, batch: CertificateBatch) -> BatchDetail:
     )
 
 
+def _parse_issue_date(value: str | None) -> datetime:
+    if not value:
+        return datetime.utcnow()
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="issue_date must be YYYY-MM-DD") from exc
+
+
+def _page_batch_records(
+    records: list[dict],
+    *,
+    current: int | None,
+    size: int | None,
+    keyword: str | None,
+    status: str | None,
+) -> dict:
+    page_no = max(int(current or 1), 1)
+    page_size = max(int(size or 10), 1)
+    keyword_text = (keyword or "").lower()
+    status_text = status or ""
+
+    def matches(record: dict) -> bool:
+        if keyword_text and keyword_text not in str(record).lower():
+            return False
+        if status_text and record.get("status") != status_text:
+            return False
+        return True
+
+    filtered = [record for record in records if matches(record)]
+    start = (page_no - 1) * page_size
+    return {
+        "records": filtered[start:start + page_size],
+        "total": len(filtered),
+        "current": page_no,
+        "size": page_size,
+    }
+
+
 @router.post("", response_model=ApiResponse[BatchDetail])
 def create_batch(payload: BatchCreate, db: Session = Depends(get_db)) -> ApiResponse[BatchDetail]:
     batch = create_batch_record(
@@ -122,33 +163,55 @@ def list_batches(
     """
     前端frontend/src/types/index.ts里getBatches()要的是分页格式PageResult
     （{records,total,current,size}），不是纯列表——之前这里直接返回列表，
-    格式跟前端期望的不一致，这是我们自己的bug，这次一并修掉。current/size/
-    keyword/status这几个查询参数命名跟4号在admin.py里写的_page()保持一致，
-    方便以后有需要的话统一。
+    格式跟前端期望的不一致，是我们自己的bug，已经修掉。始终返回分页格式
+    （不像_page_batch_records那样"没传分页参数就退化成纯列表"），因为
+    PageQuery里current/size是必填字段，前端调用这个接口时永远会带上，
+    保持行为单一、可预期。
     """
-    current = max(current, 1)
-    size = max(size, 1)
-
     batches = db.query(CertificateBatch).order_by(CertificateBatch.created_at.desc()).all()
-    details = [_to_batch_detail(db, batch) for batch in batches]
-
-    if keyword:
-        keyword_lower = keyword.lower()
-        details = [d for d in details if keyword_lower in d.batch_name.lower() or keyword_lower in d.batch_no.lower()]
-    if status:
-        details = [d for d in details if d.status == status]
-
-    start = (current - 1) * size
-    page_records = details[start:start + size]
-
+    records = [_to_batch_detail(db, batch).model_dump() for batch in batches]
     return ApiResponse.success(
-        {
-            "records": [record.model_dump() for record in page_records],
-            "total": len(details),
-            "current": current,
-            "size": size,
-        }
+        _page_batch_records(records, current=current, size=size, keyword=keyword, status=status)
     )
+
+
+@router.put("/{batch_id}", response_model=ApiResponse[BatchDetail])
+def update_batch(
+    batch_id: int,
+    payload: BatchUpdate,
+    db: Session = Depends(get_db),
+) -> ApiResponse[BatchDetail]:
+    batch = db.get(CertificateBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
+    if payload.batch_name is not None:
+        batch.batch_name = payload.batch_name
+    if payload.project_name is not None:
+        batch.project_name = payload.project_name
+    if payload.template_id is not None:
+        batch.template_id = payload.template_id
+    if payload.student_ids is not None:
+        batch.student_ids = payload.student_ids
+    if payload.status is not None:
+        batch.status = payload.status
+    db.commit()
+    db.refresh(batch)
+    return ApiResponse.success(_to_batch_detail(db, batch))
+
+
+@router.delete("/{batch_id}")
+def delete_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict]:
+    batch = db.get(CertificateBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
+    certificate_count = db.query(Certificate).filter(Certificate.batch_id == batch_id).count()
+    if certificate_count:
+        return ApiResponse.success(
+            {"deleted": False, "message": "batch has generated certificates and is kept for audit"}
+        )
+    db.delete(batch)
+    db.commit()
+    return ApiResponse.success({"deleted": True})
 
 
 def _load_template_dict(db: Session, template_id: int | None) -> dict:
@@ -157,9 +220,12 @@ def _load_template_dict(db: Session, template_id: int | None) -> dict:
 
     template = db.get(CertificateTemplate, template_id)
     if template is None:
-        raise HTTPException(status_code=404, detail=f"模板不存在：template_id={template_id}")
+        fallback = DEFAULT_TEMPLATE.copy()
+        fallback["template_id"] = template_id
+        return fallback
 
     return {
+        "template_id": template.template_id,
         "template_code": template.template_code,
         "project_name": template.template_name,
         "institution_name": DEFAULT_TEMPLATE["institution_name"],
@@ -168,7 +234,11 @@ def _load_template_dict(db: Session, template_id: int | None) -> dict:
 
 
 @router.post("/{batch_id}/generate", response_model=ApiResponse[GenerateResult])
-def generate_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[GenerateResult]:
+def generate_batch(
+    batch_id: int,
+    payload: BatchGeneratePayload | None = None,
+    db: Session = Depends(get_db),
+) -> ApiResponse[GenerateResult]:
     """
     批量触发证书生成——接口规范.md第4.4节。不需要请求体，处理的对象是创建这个
     批次时（POST /admin/batches）就存下来的student_ids名单。
@@ -182,13 +252,15 @@ def generate_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[
     if batch is None:
         raise HTTPException(status_code=404, detail=f"批次不存在：batch_id={batch_id}")
 
-    template = _load_template_dict(db, batch.template_id)
-    issue_date = datetime.utcnow()
+    student_ids = payload.student_ids if payload and payload.student_ids else batch.student_ids or []
+    template_id = payload.template_id if payload and payload.template_id is not None else batch.template_id
+    template = _load_template_dict(db, template_id)
+    issue_date = _parse_issue_date(payload.issue_date if payload else None)
 
     failures: list[GenerateFailure] = []
     generated_count = 0
 
-    for student_id in batch.student_ids or []:
+    for student_id in student_ids:
         try:
             certificate_service.generate_certificate(
                 db,
@@ -213,4 +285,35 @@ def generate_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[
             failed_count=len(failures),
             failures=failures,
         )
+    )
+
+
+@router.post("/{batch_id}/evidence")
+def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict]:
+    batch = db.get(CertificateBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
+
+    certificates = db.query(Certificate).filter(Certificate.batch_id == batch_id).all()
+    evidenced_count = 0
+    for certificate in certificates:
+        if certificate.certificate_hash and not certificate.receipt_id:
+            receipt = certificate_service._create_evidence_receipt(
+                db,
+                certificate.certificate_id,
+                certificate.certificate_no,
+                certificate.certificate_hash,
+            )
+            certificate.receipt_id = receipt.receipt_no
+            evidenced_count += 1
+
+    if certificates and all(certificate.receipt_id for certificate in certificates):
+        batch.status = "EVIDENCED"
+    db.commit()
+    return ApiResponse.success(
+        {
+            "batch_id": batch_id,
+            "evidenced": len(certificates),
+            "newly_evidenced": evidenced_count,
+        }
     )

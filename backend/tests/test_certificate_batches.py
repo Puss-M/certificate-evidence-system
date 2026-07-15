@@ -26,6 +26,18 @@ async def _get_json(path: str) -> httpx.Response:
         return await client.get(path)
 
 
+async def _put_json(path: str, payload: dict | None = None) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.put(path, json=payload)
+
+
+async def _delete_json(path: str) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        return await client.delete(path)
+
+
 def test_create_batch_stores_student_ids(db_session) -> None:
     student1 = Student(student_no="2023401", student_name="小明", class_name="1班")
     student2 = Student(student_no="2023402", student_name="小红", class_name="1班")
@@ -57,6 +69,38 @@ def test_create_batch_stores_student_ids(db_session) -> None:
     assert page["size"] == 10
     assert page["records"][0]["batch_id"] == created["batch_id"]
 
+    page_resp = asyncio.run(_get_json("/api/admin/batches?current=1&size=10"))
+    assert page_resp.status_code == 200
+    page = page_resp.json()["data"]
+    assert page["total"] == 1
+    assert page["records"][0]["batch_id"] == created["batch_id"]
+
+
+def test_update_and_delete_batch_match_frontend_routes(db_session) -> None:
+    batch_id = asyncio.run(
+        _post_json(
+            "/api/admin/batches",
+            {"batch_name": "old name", "project_name": "old project", "student_ids": []},
+        )
+    ).json()["data"]["batch_id"]
+
+    update_resp = asyncio.run(
+        _put_json(
+            f"/api/admin/batches/{batch_id}",
+            {"batch_name": "new name", "project_name": "new project", "status": "IMPORTED"},
+        )
+    )
+
+    assert update_resp.status_code == 200
+    updated = update_resp.json()["data"]
+    assert updated["batch_name"] == "new name"
+    assert updated["project_name"] == "new project"
+    assert updated["status"] == "IMPORTED"
+
+    delete_resp = asyncio.run(_delete_json(f"/api/admin/batches/{batch_id}"))
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["data"]["deleted"] is True
+
 
 def test_generate_batch_creates_certificate_for_each_stored_student(db_session) -> None:
     student1 = Student(student_no="2023403", student_name="小刚", class_name="1班")
@@ -83,6 +127,39 @@ def test_generate_batch_creates_certificate_for_each_stored_student(db_session) 
     assert detail["generated"] == 2
     assert detail["evidenced"] == 2  # 当前设计里生成和存证是原子完成的，见certificate_service.py注释
     assert detail["status"] == "GENERATED"
+
+
+def test_generate_batch_accepts_frontend_student_ids_body(db_session) -> None:
+    student = Student(student_no="2023410", student_name="frontend user", class_name="1")
+    db_session.add(student)
+    db_session.commit()
+
+    batch_id = asyncio.run(
+        _post_json(
+            "/api/admin/batches",
+            {"batch_name": "frontend selected students", "student_ids": []},
+        )
+    ).json()["data"]["batch_id"]
+
+    generate_resp = asyncio.run(
+        _post_json(
+            f"/api/admin/batches/{batch_id}/generate",
+            {
+                "template_id": 1,
+                "student_ids": [student.student_id],
+                "issue_date": "2026-07-14",
+            },
+        )
+    )
+
+    assert generate_resp.status_code == 200
+    result = generate_resp.json()["data"]
+    assert result["generated_count"] == 1
+    assert result["failed_count"] == 0
+
+    evidence_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/evidence"))
+    assert evidence_resp.status_code == 200
+    assert evidence_resp.json()["data"]["evidenced"] == 1
 
 
 def test_generate_batch_reports_failure_for_missing_student_without_blocking_others(db_session) -> None:

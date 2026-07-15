@@ -373,6 +373,14 @@ def _ensure_batch(db: Session, batch_id: int | None) -> int | None:
     return batch_id
 
 
+def _get_certificate_by_identifier(db: Session, identifier: str) -> Certificate | None:
+    if identifier.isdigit():
+        certificate = db.get(Certificate, int(identifier))
+        if certificate is not None:
+            return certificate
+    return db.query(Certificate).filter(Certificate.certificate_no == identifier).one_or_none()
+
+
 def _certificate_template_dict(template_id: int | None, project_name: str | None = None) -> dict[str, Any]:
     return {
         "template_id": template_id,
@@ -498,7 +506,7 @@ def delete_student(student_id: int, db: Session = Depends(get_db)) -> ApiRespons
     return ApiResponse.success({"deleted": True})
 
 
-@router.post("/students/import")
+@router.post("/_legacy/students/import-placeholder", include_in_schema=False)
 async def import_students(file: UploadFile = File(...), batch_name: str = Form(""),
                           template_id: int = Form(0)) -> ApiResponse[dict[str, Any]]:
     # 当前仅完成接口联调，不解析上传文件内容，避免把本地隐私数据误写入数据库。
@@ -689,10 +697,10 @@ def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[
     return ApiResponse.success({"evidenced": len(certificates)})
 
 
-@router.post("/certificates/{certificate_id}/revoke")
-def revoke_certificate(certificate_id: int, payload: RevokePayload,
+@router.post("/certificates/{certificate_identifier}/revoke")
+def revoke_certificate(certificate_identifier: str, payload: RevokePayload,
                        db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
-    certificate = db.get(Certificate, certificate_id)
+    certificate = _get_certificate_by_identifier(db, certificate_identifier)
     if certificate is None:
         raise HTTPException(status_code=404, detail="certificate not found")
     certificate.status = CertificateStatus.REVOKED.value
