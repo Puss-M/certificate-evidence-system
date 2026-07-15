@@ -1,4 +1,7 @@
+import logging
+
 from fastapi import APIRouter, Depends, File, UploadFile
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.responses import ApiResponse
@@ -9,6 +12,7 @@ from app.services import verification_service
 
 
 router = APIRouter(prefix="/verification")
+logger = logging.getLogger(__name__)
 
 
 def _log_verification(db: Session, certificate_no: str, action: str, result: VerificationResult) -> None:
@@ -16,16 +20,20 @@ def _log_verification(db: Session, certificate_no: str, action: str, result: Ver
     （action中文短句、target_type固定"证书管理"、target_id用certificate_no、
     operator暂时写死"public"——验真是公开接口，还没有登录鉴权，先用这个占位，
     等有真实身份识别后再改）。"""
-    db.add(
-        AuditLog(
-            action=action,
-            target_type="证书管理",
-            target_id=certificate_no,
-            operator="public",
-            detail=f"验真结果：{result.result}",
+    try:
+        db.add(
+            AuditLog(
+                action=action,
+                target_type="证书管理",
+                target_id=certificate_no[:64],
+                operator="public",
+                detail=f"验真结果：{result.result}",
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("failed to write verification audit log")
 
 
 @router.get("/{certificate_no}", response_model=ApiResponse[VerificationResult])

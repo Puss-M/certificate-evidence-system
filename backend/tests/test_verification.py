@@ -14,6 +14,8 @@ from datetime import datetime
 import httpx
 
 from app.main import app
+from app.models.evidence_receipt import EvidenceReceipt
+from app.models.revocation_record import RevocationRecord
 from app.models.student import Student
 from app.services import certificate_service
 
@@ -70,13 +72,20 @@ def test_verify_by_certificate_no_returns_pass(db_session) -> None:
 
     assert data["code"] == 0
     assert data["data"]["result"] == "PASS"
+    assert data["data"]["verify_result"] == "PASS"
+    assert data["data"]["receipt_exists"] is True
+    assert data["data"]["hash_match"] is True
     assert data["data"]["certificate_hash"] == certificate.certificate_hash
+    assert data["data"]["stored_hash"] == certificate.certificate_hash
+    assert data["data"]["verify_message"] == data["data"]["message"]
 
 
 def test_verify_by_certificate_no_returns_not_found(db_session) -> None:
     data = asyncio.run(_get_json("/api/verification/CERT-NOT-EXIST"))
 
     assert data["data"]["result"] == "NOT_FOUND"
+    assert data["data"]["receipt_exists"] is False
+    assert data["data"]["hash_match"] is False
 
 
 def test_verify_by_file_returns_pass_on_original_file(db_session) -> None:
@@ -89,8 +98,11 @@ def test_verify_by_file_returns_pass_on_original_file(db_session) -> None:
     )
 
     assert data["data"]["result"] == "PASS"
+    assert data["data"]["verify_result"] == "PASS"
+    assert data["data"]["receipt_exists"] is True
     assert data["data"]["hash_match"] is True
     assert data["data"]["uploaded_hash"] == certificate.certificate_hash
+    assert data["data"]["stored_hash"] == certificate.certificate_hash
 
 
 def test_verify_by_file_returns_hash_mismatch_on_tampered_file(db_session) -> None:
@@ -108,13 +120,40 @@ def test_verify_by_file_returns_hash_mismatch_on_tampered_file(db_session) -> No
     assert data["data"]["uploaded_hash"] != certificate.certificate_hash
 
 
+def test_verify_rejects_receipt_hash_mismatch(db_session) -> None:
+    certificate = _seed_certificate(db_session)
+    receipt = (
+        db_session.query(EvidenceReceipt)
+        .filter(EvidenceReceipt.receipt_no == certificate.receipt_id)
+        .one()
+    )
+    receipt.certificate_hash = "0" * 64
+    db_session.commit()
+
+    data = asyncio.run(_get_json(f"/api/verification/{certificate.certificate_no}"))
+
+    assert data["data"]["receipt_exists"] is True
+    assert data["data"]["hash_match"] is False
+    assert data["data"]["verify_result"] == "HASH_MISMATCH"
+
+
 def test_verify_returns_revoked_for_both_endpoints(db_session) -> None:
     certificate = _seed_certificate(db_session)
     certificate.status = "REVOKED"
+    db_session.add(
+        RevocationRecord(
+            certificate_id=certificate.certificate_id,
+            action_type="REVOKE",
+            reason="证书信息有误",
+            operator="admin",
+        )
+    )
     db_session.commit()
 
     by_no = asyncio.run(_get_json(f"/api/verification/{certificate.certificate_no}"))
     assert by_no["data"]["result"] == "REVOKED"
+    assert by_no["data"]["revocation_reason"] == "证书信息有误"
+    assert by_no["data"]["revoked_at"] is not None
 
     pdf_path = certificate_service.PROJECT_ROOT / certificate.pdf_path
     by_file = asyncio.run(

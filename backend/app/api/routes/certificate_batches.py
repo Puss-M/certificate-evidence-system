@@ -325,10 +325,17 @@ def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[
     if certificates and all(certificate.receipt_id for certificate in certificates):
         batch.status = "EVIDENCED"
     db.commit()
+    receipt_ids = [
+        certificate.receipt_id
+        for certificate in certificates
+        if certificate.receipt_id is not None
+    ]
     return ApiResponse.success(
         {
             "batch_id": batch_id,
-            "evidenced": len(certificates),
+            "success_count": len(receipt_ids),
+            "receipt_ids": receipt_ids,
+            "evidenced": len(receipt_ids),
             "newly_evidenced": evidenced_count,
         }
     )

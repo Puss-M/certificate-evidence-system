@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.main import app
 from app.models.audit_log import AuditLog
@@ -93,3 +94,27 @@ def test_verification_endpoints_write_audit_log(db_session) -> None:
     actions = {log.action for log in logs}
     assert actions == {"证书验真-编号", "证书验真-上传文件"}
     assert all("PASS" in log.detail for log in logs)
+
+
+def test_verification_audit_handles_long_identifier(db_session) -> None:
+    certificate_no = "X" * 80
+
+    response = asyncio.run(_get_json(f"/api/verification/{certificate_no}"))
+
+    assert response.status_code == 200
+    assert response.json()["data"]["verify_result"] == "NOT_FOUND"
+    log = db_session.query(AuditLog).order_by(AuditLog.audit_id.desc()).first()
+    assert log is not None
+    assert log.target_id == certificate_no[:64]
+
+
+def test_verification_still_responds_when_audit_commit_fails(db_session, monkeypatch) -> None:
+    def fail_commit() -> None:
+        raise SQLAlchemyError("audit unavailable")
+
+    monkeypatch.setattr(db_session, "commit", fail_commit)
+
+    response = asyncio.run(_get_json("/api/verification/CERT-NOT-EXIST"))
+
+    assert response.status_code == 200
+    assert response.json()["data"]["verify_result"] == "NOT_FOUND"
