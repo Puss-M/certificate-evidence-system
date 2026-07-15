@@ -63,9 +63,11 @@ def test_create_batch_stores_student_ids(db_session) -> None:
 
     list_resp = asyncio.run(_get_json("/api/admin/batches"))
     assert list_resp.status_code == 200
-    batches = list_resp.json()["data"]
-    assert len(batches) == 1
-    assert batches[0]["batch_id"] == created["batch_id"]
+    page = list_resp.json()["data"]
+    assert page["total"] == 1
+    assert page["current"] == 1
+    assert page["size"] == 10
+    assert page["records"][0]["batch_id"] == created["batch_id"]
 
     page_resp = asyncio.run(_get_json("/api/admin/batches?current=1&size=10"))
     assert page_resp.status_code == 200
@@ -121,7 +123,7 @@ def test_generate_batch_creates_certificate_for_each_stored_student(db_session) 
     assert result["generated_count"] == 2
     assert result["failed_count"] == 0
 
-    detail = asyncio.run(_get_json("/api/admin/batches")).json()["data"][0]
+    detail = asyncio.run(_get_json("/api/admin/batches")).json()["data"]["records"][0]
     assert detail["generated"] == 2
     assert detail["evidenced"] == 2  # 当前设计里生成和存证是原子完成的，见certificate_service.py注释
     assert detail["status"] == "GENERATED"
@@ -157,7 +159,11 @@ def test_generate_batch_accepts_frontend_student_ids_body(db_session) -> None:
 
     evidence_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/evidence"))
     assert evidence_resp.status_code == 200
-    assert evidence_resp.json()["data"]["evidenced"] == 1
+    evidence_data = evidence_resp.json()["data"]
+    assert evidence_data["success_count"] == 1
+    assert len(evidence_data["receipt_ids"]) == 1
+    assert evidence_data["evidenced"] == 1
+    assert evidence_data["newly_evidenced"] == 0
 
 
 def test_generate_batch_reports_failure_for_missing_student_without_blocking_others(db_session) -> None:

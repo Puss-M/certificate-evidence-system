@@ -15,6 +15,7 @@
 - 证书列表接口
 - 公共验真接口
 - 证书生成与本地哈希链回执
+- 批次 Merkle Root 与单证书 Merkle Proof（本地 P2）
 - 管理员前端联调接口
 - 撤销、补发接口骨架
 - 接口自动化测试
@@ -53,14 +54,13 @@ http://127.0.0.1:8000/docs
 .\.venv\Scripts\python.exe -m scripts.create_tables
 ```
 
-如果本机以前已经创建过旧表，需要补齐 `certificates`、`certificate_batches` 和
-`revocation_records` 的新增字段，可执行：
+如果本机以前已经创建过旧表，需要补齐业务表新增字段和 Merkle 表，可执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.upgrade_certificate_schema
 ```
 
-该脚本只补缺失列，不删除表、不清空数据。
+该脚本只补缺失列并按需创建 `credential_roots`、`merkle_tree_nodes`，不删除表、不清空数据。若旧 Merkle 表已有重复批次 Root 或重复节点位置，脚本会保留原数据并明确中止，需先人工核对历史记录后重跑，避免静默删除存证事实。
 
 当前表结构草案：
 
@@ -71,6 +71,8 @@ http://127.0.0.1:8000/docs
 - `evidence_receipts`
 - `revocation_records`
 - `audit_logs`
+- `credential_roots`
+- `merkle_tree_nodes`
 
 ## 当前接口
 
@@ -87,6 +89,7 @@ http://127.0.0.1:8000/docs
 - `GET/POST/PUT/DELETE /api/admin/batches`
 - `POST /api/admin/batches/{batch_id}/generate`
 - `POST /api/admin/batches/{batch_id}/evidence`
+- `POST /api/admin/batches/{batch_id}/merkle-root`
 - `GET /api/admin/certificate-batches`（兼容旧调用）
 - `GET /api/admin/certificates`
 - `POST /api/admin/certificates/{certificate_id}/evidence`
@@ -95,11 +98,14 @@ http://127.0.0.1:8000/docs
 - `GET /api/admin/evidence/receipts`
 - `GET /api/admin/evidence/integrity`
 - `GET /api/admin/audit-logs`
+- `GET /api/public/verify/{certificate_no}/merkle-proof`
+- `GET /api/verification/{certificate_no}/merkle-proof`（兼容路径）
 
 公共验真说明：
 
 - 编号验真：查询证书是否存在、状态是否有效、是否有存证回执。
 - 上传 PDF 复验：现场计算上传文件 SHA-256，并和数据库保存的 `certificate_hash` 比对。
+- Merkle Proof：验证证书哈希属于本地批次 Root；不等同证书当前有效，也不代表 Root 已上测试链。
 - 结果状态包括：`PASS`、`REVOKED`、`REISSUED`、`HASH_MISMATCH`、`NOT_FOUND`、`NO_RECEIPT`、`SYSTEM_ERROR`。
 
 ## 测试
@@ -113,7 +119,7 @@ http://127.0.0.1:8000/docs
 当前测试结果：
 
 ```text
-29 passed
+55 passed
 ```
 
 ## 前后端关键字段

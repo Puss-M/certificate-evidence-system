@@ -1,4 +1,4 @@
-import app.models
+import app.models  # noqa: F401  注册全部模型后再执行 metadata.create_all
 from app.db.base import Base
 from app.db.session import engine
 

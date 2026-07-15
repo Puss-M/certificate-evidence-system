@@ -9,14 +9,18 @@
 student_ids，存在这张表的student_ids字段里；触发生成（POST /admin/batches/{id}/generate）
 不需要再传一遍名单，直接用创建批次时存下来的这份。
 """
+import logging
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.responses import ApiResponse
 from app.db.session import get_db
+from app.models.audit_log import AuditLog
 from app.models.certificate import Certificate
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
@@ -25,12 +29,15 @@ from app.schemas.batch import (
     BatchDetail,
     BatchGeneratePayload,
     BatchUpdate,
+    EvidenceBatchResult,
     GenerateFailure,
     GenerateResult,
+    MerkleRootResult,
 )
-from app.services import certificate_service
+from app.services import certificate_service, merkle_service
 
 router = APIRouter(prefix="/admin/batches")
+logger = logging.getLogger(__name__)
 
 
 # 模板管理功能还没做出来之前，生成证书用的模板内容暂时用这个默认值兜底
@@ -81,6 +88,8 @@ def create_batch_record(
 
 
 def _to_batch_detail(db: Session, batch: CertificateBatch) -> BatchDetail:
+    # certificates.batch_id 现在是真正的整数外键了（之前是字符串，2号/4号那边的
+    # 合并已经把模型改过来了），这里跟着改成用int比较，不再用str()包一层。
     cert_query = db.query(Certificate).filter(Certificate.batch_id == batch.batch_id)
     generated = cert_query.count()
     evidenced = cert_query.filter(Certificate.receipt_id.isnot(None)).count()
@@ -149,21 +158,27 @@ def create_batch(payload: BatchCreate, db: Session = Depends(get_db)) -> ApiResp
     return ApiResponse.success(_to_batch_detail(db, batch))
 
 
-@router.get("")
+@router.get("", response_model=ApiResponse[dict[str, Any]])
 def list_batches(
-    current: int | None = None,
-    size: int | None = None,
+    current: int = 1,
+    size: int = 10,
     keyword: str | None = None,
     status: str | None = None,
     db: Session = Depends(get_db),
-) -> ApiResponse:
+) -> ApiResponse[dict[str, Any]]:
+    """
+    前端frontend/src/types/index.ts里getBatches()要的是分页格式PageResult
+    （{records,total,current,size}），不是纯列表——之前这里直接返回列表，
+    格式跟前端期望的不一致，是我们自己的bug，已经修掉。始终返回分页格式
+    （不像_page_batch_records那样"没传分页参数就退化成纯列表"），因为
+    PageQuery里current/size是必填字段，前端调用这个接口时永远会带上，
+    保持行为单一、可预期。
+    """
     batches = db.query(CertificateBatch).order_by(CertificateBatch.created_at.desc()).all()
     records = [_to_batch_detail(db, batch).model_dump() for batch in batches]
-    if any(value is not None for value in (current, size, keyword, status)):
-        return ApiResponse.success(
-            _page_batch_records(records, current=current, size=size, keyword=keyword, status=status)
-        )
-    return ApiResponse.success(records)
+    return ApiResponse.success(
+        _page_batch_records(records, current=current, size=size, keyword=keyword, status=status)
+    )
 
 
 @router.put("/{batch_id}", response_model=ApiResponse[BatchDetail])
@@ -253,13 +268,27 @@ def generate_batch(
 
     for student_id in student_ids:
         try:
-            certificate_service.generate_certificate(
+            certificate = certificate_service.generate_certificate(
                 db,
                 student_id=student_id,
                 template=template,
                 issue_date=issue_date,
                 batch_id=batch_id,
             )
+            # 审计日志埋点：字段风格跟4号在admin.py里写撤销/补发日志时保持一致
+            # （action中文短句、target_type固定"证书管理"、target_id用certificate_no、
+            # operator暂时写死"admin"，还没接登录鉴权）。每张证书单独记一条，方便
+            # 以后按certificate_no查"这张证书是什么时候生成的"。
+            db.add(
+                AuditLog(
+                    action="证书生成",
+                    target_type="证书管理",
+                    target_id=certificate.certificate_no[:64],
+                    operator="admin",
+                    detail=f"批次batch_id={batch_id}生成",
+                )
+            )
+            db.commit()
             generated_count += 1
         except (ValueError, RuntimeError) as exc:
             db.rollback()
@@ -279,8 +308,11 @@ def generate_batch(
     )
 
 
-@router.post("/{batch_id}/evidence")
-def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict]:
+@router.post("/{batch_id}/evidence", response_model=ApiResponse[EvidenceBatchResult])
+def evidence_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+) -> ApiResponse[EvidenceBatchResult]:
     batch = db.get(CertificateBatch, batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
@@ -301,10 +333,69 @@ def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[
     if certificates and all(certificate.receipt_id for certificate in certificates):
         batch.status = "EVIDENCED"
     db.commit()
+    receipt_ids = [
+        certificate.receipt_id
+        for certificate in certificates
+        if certificate.receipt_id is not None
+    ]
     return ApiResponse.success(
-        {
-            "batch_id": batch_id,
-            "evidenced": len(certificates),
-            "newly_evidenced": evidenced_count,
-        }
+        EvidenceBatchResult(
+            batch_id=batch_id,
+            success_count=len(receipt_ids),
+            receipt_ids=receipt_ids,
+            evidenced=len(receipt_ids),
+            newly_evidenced=evidenced_count,
+        )
+    )
+
+
+@router.post("/{batch_id}/merkle-root", response_model=ApiResponse[MerkleRootResult])
+def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[MerkleRootResult]:
+    """
+    Merkle Root（P2加分项，FISCO_BCOS与存证降级策略.md第8节 / 数据库设计.md第9节）：
+    本地哈希链之上叠加的一层，把批次内所有证书哈希汇总成一个Root，为以后接测试链
+    做准备（如果接了测试链，一个批次只需要写一笔交易，不是逐张证书上链）。
+
+    单独开一个路由、不塞进上面的evidence_batch()里，是为了不改动4号那边已经跑通
+    的存证主流程——这一步失败（比如批次里还有证书没生成完）不会影响evidence_batch
+    已经做完的事，符合降级策略里"Root是可选叠加层，不能阻塞P0主线"的要求。
+    """
+    try:
+        root_record = merkle_service.compute_batch_root(db, batch_id)
+    except merkle_service.MerkleBatchNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except merkle_service.MerkleRootAlreadyExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except merkle_service.MerkleRootConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        db.add(
+            AuditLog(
+                action="批次Merkle Root生成",
+                target_type="证书管理",
+                target_id=root_record.root_no,
+                operator="admin",
+                detail=f"批次batch_id={batch_id}生成Root，包含{root_record.leaf_count}张证书",
+            )
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("failed to write Merkle Root audit log")
+
+    return ApiResponse.success(
+        MerkleRootResult(
+            batch_id=batch_id,
+            root_id=root_record.root_no,
+            root_no=root_record.root_no,
+            merkle_root=root_record.merkle_root,
+            leaf_order_rule=root_record.leaf_order_rule,
+            odd_leaf_rule=root_record.odd_leaf_rule,
+            previous_root_hash=root_record.previous_root_hash,
+            current_root_hash=root_record.current_root_hash,
+            leaf_count=root_record.leaf_count,
+        )
     )
