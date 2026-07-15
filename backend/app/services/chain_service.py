@@ -50,6 +50,18 @@ def is_chain_configured() -> bool:
     )
 
 
+def _expected_chain_ids() -> set[int]:
+    try:
+        return {
+            int(item.strip())
+            for item in settings.chain_expected_chain_ids.split(",")
+            if item.strip()
+        }
+    except ValueError:
+        logger.error("CHAIN_EXPECTED_CHAIN_IDS 配置无效，拒绝发送链上交易")
+        return set()
+
+
 def _get_web3_and_contract():
     """延迟导入web3——这样即使没装web3包，只要没配置链相关的环境变量，
     其它不涉及上链的功能也完全不受影响，不会因为导入失败连带炸掉整个后端。"""
@@ -59,9 +71,19 @@ def _get_web3_and_contract():
     if abi is None:
         return None, None
 
-    w3 = Web3(Web3.HTTPProvider(settings.chain_rpc_url))
+    w3 = Web3(Web3.HTTPProvider(settings.chain_rpc_url, request_kwargs={"timeout": 5}))
     if not w3.is_connected():
         logger.warning("连不上本地测试链：%s，本次跳过上链", settings.chain_rpc_url)
+        return None, None
+
+    chain_id = int(w3.eth.chain_id)
+    expected_chain_ids = _expected_chain_ids()
+    if chain_id not in expected_chain_ids:
+        logger.error(
+            "拒绝连接未授权链：chain_id=%s，允许列表=%s",
+            chain_id,
+            sorted(expected_chain_ids),
+        )
         return None, None
 
     contract = w3.eth.contract(address=settings.chain_contract_address, abi=abi)

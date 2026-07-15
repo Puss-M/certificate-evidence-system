@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     chain_rpc_url: str | None = None
     chain_backend_private_key: str | None = None
     chain_contract_address: str | None = None
+    chain_expected_chain_ids: str = "1337,31337"
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -55,7 +55,7 @@ def test_upgrade_adds_missing_batch_fields_without_recreating_tables(monkeypatch
     assert {"project_name", "issue_time", "previous_certificate_no", "updated_at"} <= certificate_columns
     assert {"action_type", "new_certificate_no"} <= revocation_columns
     assert "college" in student_columns
-    assert "leaf_order_rule" in root_columns
+    assert {"leaf_order_rule", "tx_hash"} <= root_columns
     assert {"credential_roots", "merkle_tree_nodes"} <= set(inspector.get_table_names())
 
     root_unique_columns = upgrader._unique_column_sets("credential_roots")

@@ -131,6 +131,11 @@ def main() -> None:
             "leaf_order_rule",
             "leaf_order_rule VARCHAR(32) NOT NULL DEFAULT 'CERTIFICATE_NO_ASC'",
         )
+        _add_column_if_missing(
+            "credential_roots",
+            "tx_hash",
+            "tx_hash VARCHAR(80) NULL",
+        )
         _create_unique_index_if_missing(
             "credential_roots",
             "uq_credential_roots_batch_id",

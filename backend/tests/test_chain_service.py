@@ -11,7 +11,6 @@
 """
 import asyncio
 import json
-from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -70,7 +69,10 @@ def deployed_contract_settings(monkeypatch):
     ——这样record_root_on_chain/get_root_from_chain走的是和生产环境完全一样的
     代码路径，只是最终连接的是内存链，不是真的Ganache/Hardhat进程。
     """
-    from web3 import EthereumTesterProvider, Web3
+    pytest.importorskip("eth_tester")
+    web3 = pytest.importorskip("web3")
+    EthereumTesterProvider = web3.EthereumTesterProvider
+    Web3 = web3.Web3
 
     if not ARTIFACT_PATH.exists():
         pytest.skip(f"合约编译产物不存在：{ARTIFACT_PATH}，跳过链上集成测试")
@@ -107,6 +109,7 @@ def deployed_contract_settings(monkeypatch):
     monkeypatch.setattr(settings, "chain_rpc_url", "http://127.0.0.1:8545")
     monkeypatch.setattr(settings, "chain_backend_private_key", backend_account.key.hex())
     monkeypatch.setattr(settings, "chain_contract_address", contract_address)
+    monkeypatch.setattr(settings, "chain_expected_chain_ids", str(w3.eth.chain_id))
 
     # 关键一步：chain_service内部是 from web3 import Web3 之后调用
     # Web3.HTTPProvider(...)，这里直接把HTTPProvider换成一个"不管传什么参数
@@ -135,6 +138,22 @@ def test_record_and_get_root_on_chain_roundtrip(deployed_contract_settings):
     assert result["batch_id"] == 42
     assert result["merkle_root"] == "c" * 64
     assert result["current_root_hash"] == "d" * 64
+
+
+def test_record_root_on_chain_rejects_unexpected_chain_id(
+    deployed_contract_settings, monkeypatch
+):
+    monkeypatch.setattr(settings, "chain_expected_chain_ids", "1")
+
+    tx_hash = chain_service.record_root_on_chain(
+        root_no="ROOT-WRONG-CHAIN",
+        batch_id=1,
+        merkle_root="a" * 64,
+        previous_root_hash="0" * 64,
+        current_root_hash="b" * 64,
+    )
+
+    assert tx_hash is None
 
 
 def test_get_root_from_chain_returns_none_for_unknown_root(deployed_contract_settings):

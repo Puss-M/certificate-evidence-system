@@ -28,6 +28,7 @@ ARTIFACT_PATH = CHAIN_DIR / "artifacts" / "CredentialRootRegistry.json"
 DEPLOYMENT_INFO_PATH = CHAIN_DIR / "deployment-info.json"
 
 DEFAULT_RPC_URL = "http://127.0.0.1:8545"
+DEFAULT_EXPECTED_CHAIN_IDS = "1337,31337"
 
 
 def _load_env_file() -> dict:
@@ -57,6 +58,18 @@ def main() -> None:
         sys.exit(1)
 
     rpc_url = os.environ.get("CHAIN_RPC_URL") or env_values.get("CHAIN_RPC_URL") or DEFAULT_RPC_URL
+    expected_chain_ids_text = (
+        os.environ.get("CHAIN_EXPECTED_CHAIN_IDS")
+        or env_values.get("CHAIN_EXPECTED_CHAIN_IDS")
+        or DEFAULT_EXPECTED_CHAIN_IDS
+    )
+    try:
+        expected_chain_ids = {
+            int(item.strip()) for item in expected_chain_ids_text.split(",") if item.strip()
+        }
+    except ValueError:
+        print("CHAIN_EXPECTED_CHAIN_IDS 格式无效，拒绝部署", file=sys.stderr)
+        sys.exit(1)
 
     if not ARTIFACT_PATH.exists():
         print(f"找不到编译产物：{ARTIFACT_PATH}，请先编译合约", file=sys.stderr)
@@ -67,6 +80,12 @@ def main() -> None:
     w3 = Web3(Web3.HTTPProvider(rpc_url))
     if not w3.is_connected():
         print(f"连不上本地链 {rpc_url}，请确认本地链（Ganache/Hardhat）已经起起来了", file=sys.stderr)
+        sys.exit(1)
+    if int(w3.eth.chain_id) not in expected_chain_ids:
+        print(
+            f"拒绝部署到未授权链：chain_id={w3.eth.chain_id}，允许列表={sorted(expected_chain_ids)}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     account = w3.eth.account.from_key(private_key)

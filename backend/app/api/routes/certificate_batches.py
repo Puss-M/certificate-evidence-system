@@ -394,18 +394,22 @@ def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResp
         current_root_hash=root_record.current_root_hash,
     )
     if tx_hash:
-        root_record.tx_hash = tx_hash
-        db.commit()
-        db.add(
-            AuditLog(
-                action="批次Root上链",
-                target_type="证书管理",
-                target_id=root_record.root_no,
-                operator="admin",
-                detail=f"交易哈希：{tx_hash}",
+        try:
+            root_record.tx_hash = tx_hash
+            db.add(
+                AuditLog(
+                    action="批次Root上链",
+                    target_type="证书管理",
+                    target_id=root_record.root_no,
+                    operator="admin",
+                    detail=f"交易哈希：{tx_hash}",
+                )
             )
-        )
-        db.commit()
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            tx_hash = None
+            logger.exception("failed to persist chain transaction receipt")
 
     return ApiResponse.success(
         MerkleRootResult(
@@ -418,6 +422,6 @@ def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResp
             previous_root_hash=root_record.previous_root_hash,
             current_root_hash=root_record.current_root_hash,
             leaf_count=root_record.leaf_count,
-            tx_hash=root_record.tx_hash,
+            tx_hash=tx_hash,
         )
     )
