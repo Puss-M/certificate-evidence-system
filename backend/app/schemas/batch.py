@@ -51,3 +51,11 @@ class GenerateResult(BaseModel):
     generated_count: int
     failed_count: int
     failures: list[GenerateFailure] = []
+
+
+class EvidenceBatchResult(BaseModel):
+    batch_id: int
+    success_count: int
+    receipt_ids: list[str]
+    evidenced: int
+    newly_evidenced: int
