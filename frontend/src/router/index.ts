@@ -10,7 +10,7 @@ const router=createRouter({history:createWebHistory(),routes:[
  {path:'/student/certificates/:certificateNo',component:()=>import('@/views/student/StudentCertificateDetailView.vue'),meta:{public:true,title:'证书详情'}},
  {path:'/public/verify',component:()=>import('@/views/public/PublicVerifyView.vue'),meta:{public:true,title:'证书验真'}},
  {path:'/public/verify/:certificateNo',component:()=>import('@/views/public/PublicVerifyView.vue'),meta:{public:true,title:'证书验真'}},
- {path:'/',component:AdminLayout,redirect:'/dashboard',children:[
+ {path:'/',component:AdminLayout,redirect:()=>{const role=useAuthStore().user?.role;return role==='TEACHER'?'/projects':role==='AUDITOR'?'/chain':'/dashboard'},children:[
   {path:'dashboard',component:()=>import('@/views/DashboardView.vue'),meta:{title:'后台首页',roles:['ADMIN']}},
   {path:'projects',component:()=>import('@/views/ProjectsView.vue'),meta:{title:'实训项目管理',roles:ADMIN_TEACHER}},
   {path:'students',component:()=>import('@/views/StudentsView.vue'),meta:{title:'学生管理',roles:ADMIN_TEACHER}},
