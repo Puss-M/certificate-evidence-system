@@ -27,6 +27,7 @@ from app.schemas.batch import (
     BatchDetail,
     BatchGeneratePayload,
     BatchUpdate,
+    EvidenceBatchResult,
     GenerateFailure,
     GenerateResult,
     MerkleRootResult,
@@ -279,7 +280,7 @@ def generate_batch(
                 AuditLog(
                     action="证书生成",
                     target_type="证书管理",
-                    target_id=certificate.certificate_no,
+                    target_id=certificate.certificate_no[:64],
                     operator="admin",
                     detail=f"批次batch_id={batch_id}生成",
                 )
@@ -304,8 +305,11 @@ def generate_batch(
     )
 
 
-@router.post("/{batch_id}/evidence")
-def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict]:
+@router.post("/{batch_id}/evidence", response_model=ApiResponse[EvidenceBatchResult])
+def evidence_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+) -> ApiResponse[EvidenceBatchResult]:
     batch = db.get(CertificateBatch, batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
@@ -332,13 +336,13 @@ def evidence_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[
         if certificate.receipt_id is not None
     ]
     return ApiResponse.success(
-        {
-            "batch_id": batch_id,
-            "success_count": len(receipt_ids),
-            "receipt_ids": receipt_ids,
-            "evidenced": len(receipt_ids),
-            "newly_evidenced": evidenced_count,
-        }
+        EvidenceBatchResult(
+            batch_id=batch_id,
+            success_count=len(receipt_ids),
+            receipt_ids=receipt_ids,
+            evidenced=len(receipt_ids),
+            newly_evidenced=evidenced_count,
+        )
     )
 
 

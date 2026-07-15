@@ -716,7 +716,7 @@ def revoke_certificate(certificate_identifier: str, payload: RevokePayload,
         AuditLog(
             action="证书撤销",
             target_type="证书管理",
-            target_id=certificate.certificate_no,
+            target_id=certificate.certificate_no[:64],
             operator="admin",
             detail=payload.reason,
         )
@@ -756,7 +756,7 @@ def reissue_certificate(certificate_id: int, payload: ReissuePayload,
         AuditLog(
             action="证书补发",
             target_type="证书管理",
-            target_id=old_certificate.certificate_no,
+            target_id=old_certificate.certificate_no[:64],
             operator="admin",
             detail=f"{payload.reason}; new={new_certificate.certificate_no}",
         )

@@ -61,3 +61,11 @@ class MerkleRootResult(BaseModel):
     previous_root_hash: str | None = None
     current_root_hash: str
     leaf_count: int
+
+
+class EvidenceBatchResult(BaseModel):
+    batch_id: int
+    success_count: int
+    receipt_ids: list[str]
+    evidenced: int
+    newly_evidenced: int

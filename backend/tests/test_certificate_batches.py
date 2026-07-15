@@ -163,6 +163,7 @@ def test_generate_batch_accepts_frontend_student_ids_body(db_session) -> None:
     assert evidence_data["success_count"] == 1
     assert len(evidence_data["receipt_ids"]) == 1
     assert evidence_data["evidenced"] == 1
+    assert evidence_data["newly_evidenced"] == 0
 
 
 def test_generate_batch_reports_failure_for_missing_student_without_blocking_others(db_session) -> None:

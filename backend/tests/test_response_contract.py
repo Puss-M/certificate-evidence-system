@@ -37,3 +37,22 @@ def test_request_validation_uses_api_response_contract() -> None:
         "message": "request validation failed",
         "data": None,
     }
+
+
+def test_openapi_uses_error_response_for_validation_errors() -> None:
+    operation = app.openapi()["paths"]["/api/auth/login"]["post"]
+    schema = operation["responses"]["422"]["content"]["application/json"]["schema"]
+
+    assert schema == {"$ref": "#/components/schemas/ErrorResponse"}
+
+
+def test_openapi_describes_batch_evidence_response_fields() -> None:
+    schemas = app.openapi()["components"]["schemas"]
+
+    assert set(schemas["EvidenceBatchResult"]["required"]) == {
+        "batch_id",
+        "success_count",
+        "receipt_ids",
+        "evidenced",
+        "newly_evidenced",
+    }
