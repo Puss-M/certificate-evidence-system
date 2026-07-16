@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { VerificationResult } from '@/types'
+import type { MerkleProofResult, VerificationResult } from '@/types'
 import { certificates, receipts, useMock, wait } from './mock'
 
 function buildResult(partial: Partial<VerificationResult> & Pick<VerificationResult, 'certificate_no' | 'result'>): VerificationResult {
@@ -59,4 +59,14 @@ export async function verifyByPdf(certificateNo: string, file: File): Promise<Ve
   const form = new FormData()
   form.append('file', file)
   return await request.post(`/verification/${encodeURIComponent(certificateNo)}/file`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
+export async function getMerkleProof(certificateNo: string): Promise<MerkleProofResult> {
+  if (useMock) {
+    await wait()
+    const row = certificates.find(item => item.certificate_no === certificateNo)
+    if (!row) throw new Error('该证书尚无批次级存证')
+    const step = { sibling_hash: 'b'.repeat(64), direction: 'RIGHT' }
+    return { certificate_no: certificateNo, certificate_hash: row.certificate_hash, leaf_index: 0, leaf_order_rule: 'CERTIFICATE_NO_ASC', odd_leaf_rule: 'DUPLICATE_LAST', root_id: `ROOT-${row.batch_id}`, root_no: `ROOT-${row.batch_id}`, merkle_root: 'a'.repeat(64), merkle_proof: [step], proof: [step], proof_valid: true, verified: true }
+  }
+  return await request.get(`/verification/${encodeURIComponent(certificateNo)}/merkle-proof`, { skipErrorMessage: true } as any)
 }
