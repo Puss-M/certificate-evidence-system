@@ -137,6 +137,18 @@ def test_verify_rejects_receipt_hash_mismatch(db_session) -> None:
     assert data["data"]["verify_result"] == "HASH_MISMATCH"
 
 
+def test_verify_by_certificate_no_returns_no_receipt(db_session) -> None:
+    certificate = _seed_certificate(db_session)
+    certificate.receipt_id = None
+    db_session.commit()
+
+    data = asyncio.run(_get_json(f"/api/verification/{certificate.certificate_no}"))
+
+    assert data["data"]["result"] == "NO_RECEIPT"
+    assert data["data"]["receipt_exists"] is False
+    assert data["data"]["hash_match"] is False
+
+
 def test_verify_returns_revoked_for_both_endpoints(db_session) -> None:
     certificate = _seed_certificate(db_session)
     certificate.status = "REVOKED"
@@ -164,3 +176,23 @@ def test_verify_returns_revoked_for_both_endpoints(db_session) -> None:
         )
     )
     assert by_file["data"]["result"] == "REVOKED"
+
+
+def test_verify_returns_reissued_for_both_endpoints(db_session) -> None:
+    certificate = _seed_certificate(db_session)
+    certificate.status = "REISSUED"
+    db_session.commit()
+
+    by_no = asyncio.run(_get_json(f"/api/verification/{certificate.certificate_no}"))
+    assert by_no["data"]["result"] == "REISSUED"
+    assert by_no["data"]["verify_message"] == "旧证书已补发，请查看新证书。"
+
+    pdf_path = certificate_service.PROJECT_ROOT / certificate.pdf_path
+    by_file = asyncio.run(
+        _post_file(
+            f"/api/verification/{certificate.certificate_no}/file",
+            "cert.pdf",
+            pdf_path.read_bytes(),
+        )
+    )
+    assert by_file["data"]["result"] == "REISSUED"
