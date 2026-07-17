@@ -280,6 +280,10 @@ def test_merkle_root_route_end_to_end(db_session) -> None:
         assert proof_data["proof_valid"] is True
         assert proof_data["merkle_root"] == root_data["merkle_root"]
         assert proof_data["root_id"] == root_data["root_id"]
+        assert proof_data["leaf_count"] == root_data["leaf_count"]
+        assert proof_data["current_root_hash"] == root_data["current_root_hash"]
+        assert proof_data["previous_root_hash"] == root_data["previous_root_hash"]
+        assert proof_data["tx_hash"] == root_data["tx_hash"]
         assert proof_data["merkle_proof"] == proof_data["proof"]
 
 

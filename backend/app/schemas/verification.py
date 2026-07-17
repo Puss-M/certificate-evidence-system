@@ -34,9 +34,13 @@ class MerkleProofResult(BaseModel):
     leaf_index: int
     leaf_order_rule: str
     odd_leaf_rule: str
+    leaf_count: int
     root_id: str
     root_no: str
     merkle_root: str
+    previous_root_hash: str | None = None
+    current_root_hash: str
+    tx_hash: str | None = None
     merkle_proof: list[MerkleProofStep]
     proof: list[MerkleProofStep]
     # 拿proof + certificate_hash逐层重算，跟merkle_root比对的结果——只代表

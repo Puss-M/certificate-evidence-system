@@ -61,6 +61,7 @@ onMounted(load)
             <dt>签发日期</dt><dd>{{ certificate.issue_date || '—' }}</dd>
             <dt>存证状态</dt><dd><StatusTag :value="certificate.evidence_status" /></dd>
             <dt>存证回执</dt><dd>{{ certificate.receipt_id || '—' }}</dd>
+            <dt>Root 编号</dt><dd>{{ certificate.root_id || '暂未生成' }}</dd>
             <dt>证书哈希</dt><dd class="break">{{ certificate.certificate_hash || '—' }}</dd>
             <dt>验真链接</dt><dd class="break">{{ verifyLink }}</dd>
           </dl>

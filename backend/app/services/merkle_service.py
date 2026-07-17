@@ -239,9 +239,13 @@ def get_merkle_proof(db: Session, certificate_no: str) -> dict:
         "leaf_index": leaf_node.position_in_level,
         "leaf_order_rule": root_record.leaf_order_rule,
         "odd_leaf_rule": root_record.odd_leaf_rule,
+        "leaf_count": root_record.leaf_count,
         "root_id": root_record.root_no,
         "root_no": root_record.root_no,
         "merkle_root": root_record.merkle_root,
+        "previous_root_hash": root_record.previous_root_hash,
+        "current_root_hash": root_record.current_root_hash,
+        "tx_hash": root_record.tx_hash,
         "merkle_proof": proof,
         "proof": proof,
     }

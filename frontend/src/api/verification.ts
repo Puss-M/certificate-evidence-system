@@ -1,6 +1,9 @@
+import axios from 'axios'
 import request from '@/utils/request'
-import type { MerkleProofResult, VerificationResult } from '@/types'
+import type { ApiResponse, MerkleProofResult, VerificationResult } from '@/types'
 import { certificates, receipts, useMock, wait } from './mock'
+
+const apiBase = import.meta.env.VITE_API_BASE_URL || '/api'
 
 function buildResult(partial: Partial<VerificationResult> & Pick<VerificationResult, 'certificate_no' | 'result'>): VerificationResult {
   const messageMap: Record<string, string> = {
@@ -54,19 +57,65 @@ export async function verifyByPdf(certificateNo: string, file: File): Promise<Ve
     const row = certificates.find(item => item.certificate_no === certificateNo)
     if (!row) return buildResult({ certificate_no: certificateNo, result: 'NOT_FOUND' })
     const isTampered = file.name.toLowerCase().includes('tamper') || file.name.includes('篡改')
-    return buildResult({ certificate_no: certificateNo, result: isTampered ? 'HASH_MISMATCH' : row.status === 'REVOKED' ? 'REVOKED' : 'PASS', status: row.status, student_name: row.student_name, project_name: row.project_name, certificate_hash: row.certificate_hash, stored_hash: row.certificate_hash, uploaded_hash: isTampered ? '0'.repeat(64) : row.certificate_hash, receipt_id: row.receipt_id, receipt_exists: Boolean(row.receipt_id), hash_match: !isTampered && row.status !== 'REVOKED' })
+    const receiptExists = Boolean(row.receipt_id)
+    const lifecycleInvalid = ['REVOKED', 'REISSUED', 'EXPIRED'].includes(row.status)
+    const resultCode = lifecycleInvalid
+      ? row.status
+      : !receiptExists
+        ? 'NO_RECEIPT'
+        : isTampered
+          ? 'HASH_MISMATCH'
+          : 'PASS'
+    return buildResult({
+      certificate_no: certificateNo,
+      result: resultCode,
+      status: row.status,
+      student_name: row.student_name,
+      project_name: row.project_name,
+      certificate_hash: row.certificate_hash,
+      stored_hash: row.certificate_hash,
+      uploaded_hash: lifecycleInvalid || !receiptExists ? undefined : isTampered ? '0'.repeat(64) : row.certificate_hash,
+      receipt_id: row.receipt_id,
+      receipt_exists: receiptExists,
+      hash_match: !lifecycleInvalid && receiptExists && !isTampered
+    })
   }
   const form = new FormData()
   form.append('file', file)
   return await request.post(`/verification/${encodeURIComponent(certificateNo)}/file`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
-export async function getMerkleProof(certificateNo: string): Promise<MerkleProofResult> {
+
+export async function getMerkleProof(certificateNo: string): Promise<MerkleProofResult | undefined> {
   if (useMock) {
     await wait()
     const row = certificates.find(item => item.certificate_no === certificateNo)
-    if (!row) throw new Error('该证书尚无批次级存证')
-    const step = { sibling_hash: 'b'.repeat(64), direction: 'RIGHT' }
-    return { certificate_no: certificateNo, certificate_hash: row.certificate_hash, leaf_index: 0, leaf_order_rule: 'CERTIFICATE_NO_ASC', odd_leaf_rule: 'DUPLICATE_LAST', root_id: `ROOT-${row.batch_id}`, root_no: `ROOT-${row.batch_id}`, merkle_root: 'a'.repeat(64), merkle_proof: [step], proof: [step], proof_valid: true, verified: true }
+    if (!row || !row.receipt_id) return undefined
+    const sibling = 'f'.repeat(64)
+    return {
+      certificate_no: row.certificate_no,
+      certificate_hash: row.certificate_hash,
+      leaf_index: Math.max(row.certificate_id - 1, 0),
+      leaf_order_rule: 'CERTIFICATE_NO_ASC',
+      odd_leaf_rule: 'DUPLICATE_LAST',
+      leaf_count: 3,
+      root_id: 'ROOT-20260714-0001',
+      root_no: 'ROOT-20260714-0001',
+      merkle_root: '9'.repeat(64),
+      previous_root_hash: '0'.repeat(64),
+      current_root_hash: '8'.repeat(64),
+      tx_hash: row.status === 'REVOKED' ? '0x72ab903dd8e8a8271c05db9d900c612d4b02859cd8577be415cf7b7ac91fc112' : undefined,
+      merkle_proof: [{ sibling_hash: sibling, direction: 'RIGHT' }],
+      proof: [{ sibling_hash: sibling, direction: 'RIGHT' }],
+      proof_valid: true,
+      verified: true
+    }
   }
-  return await request.get(`/verification/${encodeURIComponent(certificateNo)}/merkle-proof`, { skipErrorMessage: true } as any)
+  const response = await axios.get<ApiResponse<MerkleProofResult>>(
+    `/verification/${encodeURIComponent(certificateNo)}/merkle-proof`,
+    { baseURL: apiBase, validateStatus: status => status < 500 }
+  )
+  if (response.status === 200 && response.data?.code === 0) {
+    return response.data.data
+  }
+  return undefined
 }
