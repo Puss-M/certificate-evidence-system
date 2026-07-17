@@ -123,7 +123,7 @@ http://127.0.0.1:8000/docs
 当前测试结果：
 
 ```text
-64 passed
+77 passed，5 skipped（跳过项为缺少 `eth_tester` 的测试链增强测试）
 ```
 
 ## 前后端关键字段
