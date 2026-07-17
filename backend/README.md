@@ -30,17 +30,27 @@
 "<MYSQL_HOME>\bin\mysqld.exe" --defaults-file="<MYSQL_DATA_DIR>\my.ini" --console
 ```
 
-再启动 FastAPI：
+再启动 FastAPI。仅在后端电脑本机开发时使用：
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
+
+前后端位于不同电脑时，后端电脑改用以下命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+两条命令只能选择一条运行，不要同时启动两个后端。`0.0.0.0` 只表示监听本机全部网络接口，
+前端不能把它作为访问地址；前端未提交的 `.env.development.local` 应设置
+`VITE_PROXY_TARGET=http://<后端电脑IP>:8000`，修改后必须重启 Vite。
 
 二维码默认指向前端公共验真页 `http://127.0.0.1:5173/public/verify`。若需要用手机在同一局域网扫码，可仅在本机 `.env`
 设置 `PUBLIC_VERIFY_BASE_URL=http://<局域网IP>:5173/public/verify`，以前端 `--host 0.0.0.0` 方式启动并重启 FastAPI 后
 重新生成演示证书；不要把局域网地址或 `.env` 提交到仓库。已经生成的旧二维码不会自动改写，需要重新生成证书后才能进入新验真页面。
 
-跨电脑运行前端时，可在前端未提交的 `.env` 中设置 `VITE_PROXY_TARGET=http://<后端电脑IP>:8000`，并在后端未提交的 `.env` 中把前端来源加入 `CORS_ALLOWED_ORIGINS`。只允许明确的 `http/https` 来源，不使用 `*`，也不在仓库中保存真实 IP。联调结束后恢复 FastAPI 的 `127.0.0.1` 监听。
+跨电脑运行前端时，可在前端未提交的 `.env.development.local` 中设置 `VITE_PROXY_TARGET=http://<后端电脑IP>:8000`，并在后端未提交的 `.env` 中把前端来源加入 `CORS_ALLOWED_ORIGINS`。只允许明确的 `http/https` 来源，不使用 `*`，也不在仓库中保存真实 IP。联调结束后恢复 FastAPI 的 `127.0.0.1` 监听。
 
 Swagger 接口文档地址：
 
