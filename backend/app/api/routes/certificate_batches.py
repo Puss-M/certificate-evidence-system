@@ -18,12 +18,14 @@ from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_admin_access
 from app.core.responses import ApiResponse
 from app.db.session import get_db
 from app.models.audit_log import AuditLog
 from app.models.certificate import Certificate
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
+from app.models.project import Project
 from app.schemas.batch import (
     BatchCreate,
     BatchDetail,
@@ -34,9 +36,9 @@ from app.schemas.batch import (
     GenerateResult,
     MerkleRootResult,
 )
-from app.services import certificate_service, chain_service, merkle_service
+from app.services import certificate_service, chain_service, merkle_service, template_service
 
-router = APIRouter(prefix="/admin/batches")
+router = APIRouter(prefix="/admin/batches", dependencies=[Depends(require_admin_access)])
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +71,7 @@ def create_batch_record(
     db: Session,
     *,
     batch_name: str,
+    project_id: int | None = None,
     project_name: str | None = None,
     template_id: int | None = None,
     student_ids: list[int] | None = None,
@@ -76,6 +79,7 @@ def create_batch_record(
     batch = CertificateBatch(
         batch_no=_next_batch_no(db),
         batch_name=batch_name,
+        project_id=project_id,
         project_name=project_name,
         template_id=template_id,
         student_ids=student_ids or [],
@@ -98,6 +102,7 @@ def _to_batch_detail(db: Session, batch: CertificateBatch) -> BatchDetail:
         batch_id=batch.batch_id,
         batch_no=batch.batch_no,
         batch_name=batch.batch_name,
+        project_id=batch.project_id,
         project_name=batch.project_name,
         template_id=batch.template_id,
         student_count=len(batch.student_ids or []),
@@ -148,10 +153,17 @@ def _page_batch_records(
 
 @router.post("", response_model=ApiResponse[BatchDetail])
 def create_batch(payload: BatchCreate, db: Session = Depends(get_db)) -> ApiResponse[BatchDetail]:
+    project_name = payload.project_name
+    if payload.project_id is not None:
+        project = db.get(Project, payload.project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"project_id={payload.project_id} not found")
+        project_name = project.project_name
     batch = create_batch_record(
         db,
         batch_name=payload.batch_name,
-        project_name=payload.project_name,
+        project_id=payload.project_id,
+        project_name=project_name,
         template_id=payload.template_id,
         student_ids=payload.student_ids,
     )
@@ -192,7 +204,13 @@ def update_batch(
         raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
     if payload.batch_name is not None:
         batch.batch_name = payload.batch_name
-    if payload.project_name is not None:
+    if payload.project_id is not None:
+        project = db.get(Project, payload.project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"project_id={payload.project_id} not found")
+        batch.project_id = project.project_id
+        batch.project_name = project.project_name
+    if payload.project_name is not None and payload.project_id is None:
         batch.project_name = payload.project_name
     if payload.template_id is not None:
         batch.template_id = payload.template_id
@@ -226,13 +244,7 @@ def _load_template_dict(db: Session, template_id: int | None) -> dict:
     if template is None:
         raise HTTPException(status_code=404, detail=f"template_id={template_id} not found")
 
-    return {
-        "template_id": template.template_id,
-        "template_code": template.template_code,
-        "project_name": template.template_name,
-        "institution_name": DEFAULT_TEMPLATE["institution_name"],
-        "grade_level": DEFAULT_TEMPLATE["grade_level"],
-    }
+    return template_service.to_generation_template(template)
 
 
 @router.post("/{batch_id}/generate", response_model=ApiResponse[GenerateResult])
@@ -258,6 +270,22 @@ def generate_batch(
     template_id = payload.template_id if payload and payload.template_id is not None else batch.template_id
     template = _load_template_dict(db, template_id)
     issue_date = _parse_issue_date(payload.issue_date if payload else None)
+
+    project_id = payload.project_id if payload and payload.project_id is not None else batch.project_id
+    project_name = batch.project_name
+    if project_id is not None:
+        project = db.get(Project, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"project_id={project_id} not found")
+        project_name = project.project_name
+    if project_name:
+        template = {**template, "project_name": project_name}
+
+    batch.project_id = project_id
+    batch.project_name = project_name
+    batch.template_id = template_id
+    batch.student_ids = student_ids
+    db.commit()
 
     failures: list[GenerateFailure] = []
     generated_count = 0

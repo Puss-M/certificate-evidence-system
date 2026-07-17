@@ -3,6 +3,7 @@ from sqlalchemy import inspect, text
 from app.db.session import engine
 from app.models.credential_root import CredentialRoot
 from app.models.merkle_tree_node import MerkleTreeNode
+from app.models.project import Project
 
 
 class SchemaUpgradeConflictError(RuntimeError):
@@ -27,6 +28,10 @@ def _add_column_if_missing(table_name: str, column_name: str, ddl: str) -> None:
 def _create_merkle_tables_if_missing() -> None:
     CredentialRoot.__table__.create(bind=engine, checkfirst=True)
     MerkleTreeNode.__table__.create(bind=engine, checkfirst=True)
+
+
+def _create_project_table_if_missing() -> None:
+    Project.__table__.create(bind=engine, checkfirst=True)
 
 
 def _unique_column_sets(table_name: str) -> set[tuple[str, ...]]:
@@ -76,6 +81,8 @@ def main() -> None:
         print("DATABASE_URL is not configured; schema upgrade skipped")
         return
 
+    _create_project_table_if_missing()
+
     if _column_names("certificates"):
         _add_column_if_missing(
             "certificates",
@@ -89,9 +96,26 @@ def main() -> None:
             "previous_certificate_no VARCHAR(80) NULL",
         )
         _add_column_if_missing("certificates", "updated_at", "updated_at DATETIME NULL")
+        _add_column_if_missing(
+            "certificates",
+            "institution_name",
+            "institution_name VARCHAR(200) NULL",
+        )
 
     if _column_names("students"):
         _add_column_if_missing("students", "college", "college VARCHAR(100) NULL")
+
+    if _column_names("certificate_templates"):
+        _add_column_if_missing(
+            "certificate_templates",
+            "institution_name",
+            "institution_name VARCHAR(200) NOT NULL DEFAULT '示范学院'",
+        )
+        _add_column_if_missing(
+            "certificate_templates",
+            "updated_at",
+            "updated_at DATETIME NULL",
+        )
 
     if _column_names("certificate_batches"):
         # These fields were added after the initial batch table was created.
@@ -100,6 +124,11 @@ def main() -> None:
             "certificate_batches",
             "project_name",
             "project_name VARCHAR(200) NULL",
+        )
+        _add_column_if_missing(
+            "certificate_batches",
+            "project_id",
+            "project_id INT NULL",
         )
         _add_column_if_missing(
             "certificate_batches",
@@ -151,6 +180,28 @@ def main() -> None:
         with engine.begin() as connection:
             connection.execute(
                 text("UPDATE certificates SET updated_at = created_at WHERE updated_at IS NULL")
+            )
+            if (
+                "template_id" in _column_names("certificates")
+                and _column_names("certificate_templates")
+            ):
+                connection.execute(
+                    text(
+                        "UPDATE certificates SET institution_name = ("
+                        "SELECT certificate_templates.institution_name "
+                        "FROM certificate_templates "
+                        "WHERE certificate_templates.template_id = certificates.template_id"
+                        ") WHERE institution_name IS NULL"
+                    )
+                )
+
+    if _column_names("certificate_templates"):
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE certificate_templates SET updated_at = created_at "
+                    "WHERE updated_at IS NULL"
+                )
             )
 
     print("certificate schema upgraded")

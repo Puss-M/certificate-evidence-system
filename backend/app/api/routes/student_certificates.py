@@ -36,6 +36,7 @@ def _certificate_item(db: Session, certificate: Certificate) -> CertificateListI
         batch_id=certificate.batch_id,
         template_id=certificate.template_id,
         project_name=certificate.project_name,
+        institution_name=certificate.institution_name,
         issue_date=_format_date(issue_time),
         issue_time=issue_time.isoformat() if issue_time else None,
         pdf_path=certificate.pdf_path,

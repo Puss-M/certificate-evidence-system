@@ -185,7 +185,11 @@ def test_record_root_on_chain_returns_none_on_duplicate(deployed_contract_settin
 async def _post_json(path: str, payload: dict | None = None) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.post(path, json=payload)
+        return await client.post(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer demo-admin-token"},
+        )
 
 
 def test_merkle_root_route_writes_tx_hash_when_chain_configured(

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.core.responses import ApiResponse
 
@@ -32,6 +32,19 @@ def require_roles(*allowed_roles: str):
         raise HTTPException(status_code=401, detail="未登录或 token 失效")
 
     return dependency
+
+
+def require_admin_access(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Protect admin routes while keeping auditors read-only."""
+    safe_methods = {"GET", "HEAD", "OPTIONS"}
+    allowed_roles = ("ADMIN", "TEACHER", "AUDITOR") if request.method in safe_methods else (
+        "ADMIN",
+        "TEACHER",
+    )
+    return require_roles(*allowed_roles)(authorization)
 
 
 @router.post("/login")

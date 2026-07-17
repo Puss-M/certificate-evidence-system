@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -12,13 +12,15 @@ from app.models.certificate import Certificate, CertificateStatus
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
 from app.models.evidence_receipt import EvidenceReceipt
+from app.models.project import Project
 from app.models.revocation_record import RevocationRecord
 from app.models.student import Student
-from app.services import certificate_service
-from app.api.routes.auth import require_roles
+from app.services import certificate_service, template_service
+from app.api.routes.auth import require_admin_access
+from app.core.config import settings
 
 
-router = APIRouter(prefix="/admin")
+router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin_access)])
 
 
 DEMO_PROJECTS: list[dict[str, Any]] = [
@@ -137,7 +139,6 @@ DEMO_AUDIT_LOGS: list[dict[str, Any]] = [
     }
 ]
 
-
 class StudentPayload(BaseModel):
     student_no: str | None = None
     student_name: str | None = None
@@ -154,6 +155,22 @@ class TemplatePayload(BaseModel):
     institution_name: str | None = None
     content_config: dict[str, Any] | None = None
     status: str | None = None
+
+
+class ProjectCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    teacher: str = Field(min_length=1, max_length=100)
+    start_date: date | None = None
+    end_date: date | None = None
+    status: str = Field(default="ACTIVE", max_length=32)
+
+
+class ProjectUpdatePayload(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    teacher: str | None = Field(default=None, min_length=1, max_length=100)
+    start_date: date | None = None
+    end_date: date | None = None
+    status: str | None = Field(default=None, max_length=32)
 
 
 class BatchPayload(BaseModel):
@@ -207,7 +224,10 @@ def _page(records: list[dict[str, Any]], current: int = 1, size: int = 10,
     current = max(int(current or 1), 1)
     size = max(int(size or 10), 1)
     keyword_text = (keyword or "").lower()
-    status_text = status or ""
+    status_text = (status or "").upper()
+
+    def normalise_status(value: str) -> str:
+        return "ACTIVE" if value.upper() == "ENABLED" else value.upper()
 
     def matches(record: dict[str, Any]) -> bool:
         if keyword_text and keyword_text not in str(record).lower():
@@ -215,7 +235,7 @@ def _page(records: list[dict[str, Any]], current: int = 1, size: int = 10,
         row_status = str(record.get("status") or record.get("result") or "")
         if not row_status and "enabled" in record:
             row_status = "ENABLED" if record["enabled"] else "DISABLED"
-        if status_text and row_status != status_text:
+        if status_text and normalise_status(row_status) != normalise_status(status_text):
             return False
         return True
 
@@ -227,6 +247,15 @@ def _page(records: list[dict[str, Any]], current: int = 1, size: int = 10,
         "current": current,
         "size": size,
     }
+
+
+def _records_or_demo(
+    records: list[dict[str, Any]],
+    demo_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if records or not settings.enable_demo_data:
+        return records
+    return demo_records
 
 
 def _next_id(records: list[dict[str, Any]], key: str) -> int:
@@ -245,19 +274,38 @@ def _student_record(student: Student) -> dict[str, Any]:
     }
 
 
+def _project_record(project: Project) -> dict[str, Any]:
+    return {
+        "id": project.project_id,
+        "name": project.project_name,
+        "teacher": project.teacher_name,
+        "start_date": project.start_date.isoformat() if project.start_date else "",
+        "end_date": project.end_date.isoformat() if project.end_date else "",
+        "status": project.status,
+    }
+
+
 def _template_record(template: CertificateTemplate) -> dict[str, Any]:
+    content_config = template_service.parse_content_config(template.content)
+    institution_name = template.institution_name or template_service.DEFAULT_INSTITUTION_NAME
+    status = template.status or "ACTIVE"
     return {
         "template_id": template.template_id,
+        "template_name": template.template_name,
+        "institution_name": institution_name,
+        "content_config": content_config,
+        "status": status,
+        "updated_at": _format_datetime(template.updated_at or template.created_at),
+        # 兼容旧管理端字段；最新前端以以上契约字段为准。
         "name": template.template_name,
-        "issuer": "示范学院",
-        "course_name": "软件开发综合实训",
-        "project_name": "2026暑期软件开发实训",
-        "certificate_title": "实训结业证书",
-        "content": template.content or "",
-        "issue_year": "2026",
-        "fields": ["student_name", "certificate_no", "issue_date", "qr_code"],
-        "enabled": template.status == "ACTIVE",
-        "updated_at": _format_datetime(template.created_at),
+        "issuer": institution_name,
+        "course_name": content_config.get("course_name", ""),
+        "project_name": content_config.get("project_name", ""),
+        "certificate_title": content_config.get("certificate_title", ""),
+        "content": content_config.get("content", ""),
+        "issue_year": content_config.get("issue_year", ""),
+        "fields": content_config.get("fields", []),
+        "enabled": status == "ACTIVE",
     }
 
 
@@ -301,6 +349,7 @@ def _certificate_record(db: Session, certificate: Certificate) -> dict[str, Any]
         "credential_type": certificate.credential_type,
         "root_id": certificate.root_id or "",
         "project_name": certificate.project_name,
+        "institution_name": certificate.institution_name,
         "issue_date": _format_date(issue_time),
         "evidence_status": "CONFIRMED" if certificate.receipt_id else "PENDING",
         "previous_certificate_no": certificate.previous_certificate_no,
@@ -382,75 +431,114 @@ def _get_certificate_by_identifier(db: Session, identifier: str) -> Certificate 
     return db.query(Certificate).filter(Certificate.certificate_no == identifier).one_or_none()
 
 
-def _certificate_template_dict(template_id: int | None, project_name: str | None = None) -> dict[str, Any]:
+def _certificate_template_dict(
+    db: Session,
+    template_id: int | None,
+    project_name: str | None = None,
+) -> dict[str, Any]:
+    if template_id is not None:
+        template = db.get(CertificateTemplate, template_id)
+        if template is not None:
+            return template_service.to_generation_template(template, project_name=project_name)
     return {
         "template_id": template_id,
         "template_code": f"TPL-{template_id or 1:03d}",
-        "institution_name": "示范学院",
+        "institution_name": template_service.DEFAULT_INSTITUTION_NAME,
         "project_name": project_name or "2026暑期软件开发实训",
-        "grade_level": "合格",
+        "grade_level": template_service.DEFAULT_GRADE_LEVEL,
     }
 
 
 @router.get("/dashboard/statistics")
 def dashboard_statistics(db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     certificates = db.query(Certificate).all()
+    project_count = db.query(Project).count()
     receipts = db.query(EvidenceReceipt).order_by(EvidenceReceipt.block_height.desc()).limit(5).all()
     logs = db.query(AuditLog).order_by(AuditLog.audit_id.desc()).limit(5).all()
 
-    if not certificates:
-        return ApiResponse.success(
-            {
-                "projectCount": len(DEMO_PROJECTS),
-                "student_count": len(DEMO_STUDENTS),
-                "certificateCount": len(DEMO_CERTIFICATES),
-                "evidencedCount": len(DEMO_RECEIPTS),
-                "validCount": 1,
-                "revokedCount": 0,
-                "recentReceipts": DEMO_RECEIPTS[:5],
-                "recentLogs": DEMO_AUDIT_LOGS[:5],
-            }
-        )
-
     return ApiResponse.success(
         {
-            "projectCount": len(DEMO_PROJECTS),
+            "projectCount": project_count or (
+                len(DEMO_PROJECTS) if settings.enable_demo_data else 0
+            ),
             "student_count": db.query(Student).count(),
             "certificateCount": len(certificates),
             "evidencedCount": sum(1 for certificate in certificates if certificate.receipt_id),
             "validCount": sum(1 for certificate in certificates if certificate.status == "VALID"),
             "revokedCount": sum(1 for certificate in certificates if certificate.status == "REVOKED"),
-            "recentReceipts": [_receipt_record(db, receipt) for receipt in receipts],
-            "recentLogs": [_audit_record(log) for log in logs] or DEMO_AUDIT_LOGS[:5],
+            "recentReceipts": _records_or_demo(
+                [_receipt_record(db, receipt) for receipt in receipts],
+                DEMO_RECEIPTS[:5],
+            ),
+            "recentLogs": _records_or_demo(
+                [_audit_record(log) for log in logs],
+                DEMO_AUDIT_LOGS[:5],
+            ),
         }
     )
 
 
 @router.get("/projects")
 def list_projects(current: int = 1, size: int = 10, keyword: str | None = None,
-                  status: str | None = None) -> ApiResponse[dict[str, Any]]:
-    return ApiResponse.success(_page(DEMO_PROJECTS, current, size, keyword, status))
+                  status: str | None = None,
+                  db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
+    projects = db.query(Project).order_by(Project.project_id.desc()).all()
+    records = _records_or_demo(
+        [_project_record(project) for project in projects],
+        DEMO_PROJECTS,
+    )
+    return ApiResponse.success(_page(records, current, size, keyword, status))
 
 
 @router.post("/projects")
-def create_project(payload: dict[str, Any]) -> ApiResponse[dict[str, Any]]:
-    record = {"id": _next_id(DEMO_PROJECTS, "id"), **payload}
-    DEMO_PROJECTS.insert(0, record)
-    return ApiResponse.success(record)
+def create_project(payload: ProjectCreatePayload,
+                   db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
+    if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
+        raise HTTPException(status_code=422, detail="end_date cannot be earlier than start_date")
+    project = Project(
+        project_name=payload.name,
+        teacher_name=payload.teacher,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        status=payload.status.upper(),
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return ApiResponse.success(_project_record(project))
 
 
 @router.put("/projects/{project_id}")
-def update_project(project_id: int, payload: dict[str, Any]) -> ApiResponse[dict[str, Any]]:
-    for record in DEMO_PROJECTS:
-        if record["id"] == project_id:
-            record.update(payload)
-            return ApiResponse.success(record)
-    raise HTTPException(status_code=404, detail="project not found")
+def update_project(project_id: int, payload: ProjectUpdatePayload,
+                   db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    values = payload.model_dump(exclude_unset=True)
+    next_start_date = values.get("start_date", project.start_date)
+    next_end_date = values.get("end_date", project.end_date)
+    if next_start_date and next_end_date and next_end_date < next_start_date:
+        raise HTTPException(status_code=422, detail="end_date cannot be earlier than start_date")
+    field_map = {"name": "project_name", "teacher": "teacher_name"}
+    for field, value in values.items():
+        if field == "status" and value is not None:
+            value = value.upper()
+        setattr(project, field_map.get(field, field), value)
+    db.commit()
+    db.refresh(project)
+    return ApiResponse.success(_project_record(project))
 
 
 @router.delete("/projects/{project_id}")
-def delete_project(project_id: int) -> ApiResponse[dict[str, Any]]:
-    DEMO_PROJECTS[:] = [record for record in DEMO_PROJECTS if record["id"] != project_id]
+def delete_project(project_id: int,
+                   db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    if db.query(CertificateBatch).filter(CertificateBatch.project_id == project_id).count():
+        raise HTTPException(status_code=409, detail="该项目已被证书批次使用，不能删除")
+    db.delete(project)
+    db.commit()
     return ApiResponse.success({"deleted": True})
 
 
@@ -458,7 +546,10 @@ def delete_project(project_id: int) -> ApiResponse[dict[str, Any]]:
 def list_students(current: int = 1, size: int = 10, keyword: str | None = None,
                   status: str | None = None, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     students = db.query(Student).order_by(Student.student_id.desc()).all()
-    records = [_student_record(student) for student in students] or DEMO_STUDENTS
+    records = _records_or_demo(
+        [_student_record(student) for student in students],
+        DEMO_STUDENTS,
+    )
     return ApiResponse.success(_page(records, current, size, keyword, status))
 
 
@@ -504,7 +595,6 @@ def update_student(student_id: int, payload: StudentPayload,
 def delete_student(
     student_id: int,
     db: Session = Depends(get_db),
-    _current_user: dict = Depends(require_roles("ADMIN", "TEACHER")),
 ) -> ApiResponse[dict[str, Any]]:
     student = db.get(Student, student_id)
     if student is None:
@@ -542,7 +632,10 @@ async def import_students(file: UploadFile = File(...), batch_name: str = Form("
 def list_templates(current: int = 1, size: int = 10, keyword: str | None = None,
                    status: str | None = None, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     templates = db.query(CertificateTemplate).order_by(CertificateTemplate.template_id.desc()).all()
-    records = [_template_record(template) for template in templates] or DEMO_TEMPLATES
+    records = _records_or_demo(
+        [_template_record(template) for template in templates],
+        DEMO_TEMPLATES,
+    )
     return ApiResponse.success(_page(records, current, size, keyword, status))
 
 
@@ -552,7 +645,8 @@ def create_template(payload: TemplatePayload, db: Session = Depends(get_db)) -> 
     template = CertificateTemplate(
         template_name=payload.template_name or payload.name or "Certificate Template",
         template_code=f"TPL-{int(datetime.utcnow().timestamp())}",
-        content=str(content_config),
+        institution_name=payload.institution_name or template_service.DEFAULT_INSTITUTION_NAME,
+        content=template_service.serialize_content_config(content_config),
         status=payload.status or "ACTIVE",
     )
     db.add(template)
@@ -569,8 +663,10 @@ def update_template(template_id: int, payload: TemplatePayload,
         raise HTTPException(status_code=404, detail="template not found")
     if payload.template_name or payload.name:
         template.template_name = payload.template_name or payload.name or template.template_name
+    if payload.institution_name is not None:
+        template.institution_name = payload.institution_name
     if payload.content_config is not None:
-        template.content = str(payload.content_config)
+        template.content = template_service.serialize_content_config(payload.content_config)
     if payload.status is not None:
         template.status = payload.status
     db.commit()
@@ -596,7 +692,10 @@ def delete_template(template_id: int, db: Session = Depends(get_db)) -> ApiRespo
 def list_batches(current: int = 1, size: int = 10, keyword: str | None = None,
                  status: str | None = None, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     batches = db.query(CertificateBatch).order_by(CertificateBatch.batch_id.desc()).all()
-    records = [_batch_record(db, batch) for batch in batches] or DEMO_BATCHES
+    records = _records_or_demo(
+        [_batch_record(db, batch) for batch in batches],
+        DEMO_BATCHES,
+    )
     return ApiResponse.success(_page(records, current, size, keyword, status))
 
 
@@ -647,7 +746,10 @@ def delete_batch(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[di
 def list_certificates(current: int = 1, size: int = 10, keyword: str | None = None,
                       status: str | None = None, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     certificates = db.query(Certificate).order_by(Certificate.certificate_id.desc()).all()
-    records = [_certificate_record(db, certificate) for certificate in certificates] or DEMO_CERTIFICATES
+    records = _records_or_demo(
+        [_certificate_record(db, certificate) for certificate in certificates],
+        DEMO_CERTIFICATES,
+    )
     return ApiResponse.success(_page(records, current, size, keyword, status))
 
 
@@ -656,10 +758,21 @@ def issue_certificates(batch_id: int, payload: IssuePayload,
                        db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     template_id = _ensure_template(db, payload.template_id)
     actual_batch_id = _ensure_batch(db, batch_id)
+    project_name: str | None = None
+    if payload.project_id is not None:
+        project = db.get(Project, payload.project_id)
+        if project is not None:
+            project_name = project.project_name
+            batch = db.get(CertificateBatch, actual_batch_id)
+            if batch is not None:
+                batch.project_id = project.project_id
+                batch.project_name = project.project_name
+                batch.template_id = template_id
+                batch.student_ids = payload.student_ids
     db.commit()
 
     issue_date = _parse_issue_date(payload.issue_date)
-    template = _certificate_template_dict(template_id)
+    template = _certificate_template_dict(db, template_id, project_name=project_name)
     failures: list[dict[str, Any]] = []
     success_count = 0
 
@@ -727,6 +840,11 @@ def revoke_certificate(certificate_identifier: str, payload: RevokePayload,
     certificate = _get_certificate_by_identifier(db, certificate_identifier)
     if certificate is None:
         raise HTTPException(status_code=404, detail="certificate not found")
+    if certificate.status != CertificateStatus.VALID.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"仅有效证书可以撤销，当前状态：{certificate.status}",
+        )
     certificate.status = CertificateStatus.REVOKED.value
     db.add(
         RevocationRecord(
@@ -762,7 +880,11 @@ def reissue_certificate(certificate_id: int, payload: ReissuePayload,
     new_certificate = certificate_service.generate_certificate(
         db,
         student_id=old_certificate.student_id,
-        template=_certificate_template_dict(old_certificate.template_id, old_certificate.project_name),
+        template=_certificate_template_dict(
+            db,
+            old_certificate.template_id,
+            old_certificate.project_name,
+        ),
         issue_date=_parse_issue_date(payload.issue_date),
         batch_id=old_certificate.batch_id,
         previous_certificate_no=old_certificate.certificate_no,
@@ -815,7 +937,10 @@ def list_receipts(current: int = 1, size: int = 10, keyword: str | None = None,
                   status: str | None = None, evidence_type: str | None = None,
                   db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     receipts = db.query(EvidenceReceipt).order_by(EvidenceReceipt.block_height.desc()).all()
-    records = [_receipt_record(db, receipt) for receipt in receipts] or DEMO_RECEIPTS
+    records = _records_or_demo(
+        [_receipt_record(db, receipt) for receipt in receipts],
+        DEMO_RECEIPTS,
+    )
     if evidence_type:
         records = [record for record in records if record.get("evidence_type") == evidence_type]
     return ApiResponse.success(_page(records, current, size, keyword, status))
@@ -826,9 +951,10 @@ def get_receipt(receipt_id: str, db: Session = Depends(get_db)) -> ApiResponse[d
     receipt = db.query(EvidenceReceipt).filter(EvidenceReceipt.receipt_no == receipt_id).one_or_none()
     if receipt is not None:
         return ApiResponse.success(_receipt_record(db, receipt))
-    for record in DEMO_RECEIPTS:
-        if record["receipt_id"] == receipt_id:
-            return ApiResponse.success(record)
+    if settings.enable_demo_data:
+        for record in DEMO_RECEIPTS:
+            if record["receipt_id"] == receipt_id:
+                return ApiResponse.success(record)
     raise HTTPException(status_code=404, detail="receipt not found")
 
 
@@ -858,7 +984,7 @@ def list_audit_logs(current: int = 1, size: int = 10, keyword: str | None = None
                     status: str | None = None, module: str | None = None,
                     db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     logs = db.query(AuditLog).order_by(AuditLog.audit_id.desc()).all()
-    records = [_audit_record(log) for log in logs] or DEMO_AUDIT_LOGS
+    records = _records_or_demo([_audit_record(log) for log in logs], DEMO_AUDIT_LOGS)
     if module:
         records = [record for record in records if record.get("module") == module]
     return ApiResponse.success(_page(records, current, size, keyword, status))
@@ -869,7 +995,8 @@ def get_audit_log(audit_id: int, db: Session = Depends(get_db)) -> ApiResponse[d
     log = db.get(AuditLog, audit_id)
     if log is not None:
         return ApiResponse.success(_audit_record(log))
-    for record in DEMO_AUDIT_LOGS:
-        if record["id"] == audit_id:
-            return ApiResponse.success(record)
+    if settings.enable_demo_data:
+        for record in DEMO_AUDIT_LOGS:
+            if record["id"] == audit_id:
+                return ApiResponse.success(record)
     raise HTTPException(status_code=404, detail="audit log not found")

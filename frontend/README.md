@@ -46,10 +46,13 @@ pnpm dev
 
 ```env
 VITE_API_BASE_URL=/api
+VITE_PROXY_TARGET=http://127.0.0.1:8000
 VITE_USE_MOCK=false
 ```
 
-Vite会把 `/api` 代理到 `http://127.0.0.1:8000`。页面不直接保存接口URL；所有接口均封装在 `src/api`，后端契约变化时只修改API层。
+Vite会把 `/api` 代理到 `VITE_PROXY_TARGET`，未配置时默认使用 `http://127.0.0.1:8000`。页面不直接保存接口URL；所有接口均封装在 `src/api`，后端契约变化时只修改API层。
+
+前后端不在同一台电脑时，只在未提交的 `.env.development` 中把 `VITE_PROXY_TARGET` 改为 `http://<后端电脑IP>:8000`。不要把真实局域网 IP 或 `.env.development` 提交到仓库。
 
 学生端当前以 `student_no` 查询参数作为模拟身份，只用于课程演示数据，不是正式登录鉴权。手机扫码演示时使用 `npm run dev -- --host 0.0.0.0` 启动前端，并把后端 `PUBLIC_VERIFY_BASE_URL` 设置为 `http://<局域网IP>:5173/public/verify` 后重新生成证书二维码。
 

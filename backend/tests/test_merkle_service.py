@@ -231,13 +231,17 @@ def test_revocation_does_not_touch_root(db_session) -> None:
 async def _post_json(path: str, payload: dict | None = None) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.post(path, json=payload)
+        return await client.post(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer demo-admin-token"},
+        )
 
 
 async def _get_json(path: str) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.get(path)
+        return await client.get(path, headers={"Authorization": "Bearer demo-admin-token"})
 
 
 def test_merkle_root_route_end_to_end(db_session) -> None:

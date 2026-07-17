@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 # 按接口规范.md第4.3节"创建证书批次"，创建批次时就要传这批证书发给哪些学生
 class BatchCreate(BaseModel):
     batch_name: str
+    project_id: int | None = None
     project_name: str | None = None
     template_id: int | None = None
     student_ids: list[int] = Field(default_factory=list)
@@ -11,6 +12,7 @@ class BatchCreate(BaseModel):
 
 class BatchUpdate(BaseModel):
     batch_name: str | None = None
+    project_id: int | None = None
     project_name: str | None = None
     template_id: int | None = None
     student_ids: list[int] | None = None
@@ -28,6 +30,7 @@ class BatchDetail(BaseModel):
     batch_id: int
     batch_no: str
     batch_name: str
+    project_id: int | None = None
     project_name: str | None = None
     template_id: int | None = None
     student_count: int

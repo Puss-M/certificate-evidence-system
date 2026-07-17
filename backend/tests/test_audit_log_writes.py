@@ -28,13 +28,17 @@ TEMPLATE = {
 async def _post_json(path: str, payload: dict | None = None) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.post(path, json=payload)
+        return await client.post(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer demo-admin-token"},
+        )
 
 
 async def _get_json(path: str) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.get(path)
+        return await client.get(path, headers={"Authorization": "Bearer demo-admin-token"})
 
 
 def test_generate_batch_writes_audit_log_per_certificate(db_session) -> None:

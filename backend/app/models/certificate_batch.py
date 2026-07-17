@@ -27,5 +27,6 @@ class CertificateBatch(Base):
     #   （POST /admin/batches/{batch_id}/generate）不再需要重复传一遍名单，
     #   直接用创建批次时存下来的这份名单
     project_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    project_id: Mapped[int | None] = mapped_column(nullable=True)
     template_id: Mapped[int | None] = mapped_column(nullable=True)
     student_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
