@@ -260,6 +260,9 @@ def test_merkle_root_route_end_to_end(db_session) -> None:
     generate_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/generate"))
     assert generate_resp.json()["data"]["generated_count"] == 2
 
+    missing_root_resp = asyncio.run(_get_json(f"/api/admin/batches/{batch_id}/merkle-root"))
+    assert missing_root_resp.status_code == 404
+
     root_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/merkle-root"))
     assert root_resp.status_code == 200
     root_data = root_resp.json()["data"]
@@ -268,6 +271,10 @@ def test_merkle_root_route_end_to_end(db_session) -> None:
     assert root_data["root_id"] == root_data["root_no"]
     assert root_data["leaf_order_rule"] == "CERTIFICATE_NO_ASC"
     assert root_data["odd_leaf_rule"] == "DUPLICATE_LAST"
+
+    query_resp = asyncio.run(_get_json(f"/api/admin/batches/{batch_id}/merkle-root"))
+    assert query_resp.status_code == 200
+    assert query_resp.json()["data"] == root_data
 
     duplicate_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/merkle-root"))
     assert duplicate_resp.status_code == 409

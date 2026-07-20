@@ -25,6 +25,7 @@ from app.models.audit_log import AuditLog
 from app.models.certificate import Certificate
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
+from app.models.credential_root import CredentialRoot
 from app.models.project import Project
 from app.schemas.batch import (
     BatchCreate,
@@ -40,6 +41,21 @@ from app.services import certificate_service, chain_service, merkle_service, tem
 
 router = APIRouter(prefix="/admin/batches", dependencies=[Depends(require_admin_access)])
 logger = logging.getLogger(__name__)
+
+
+def _merkle_root_result(root_record: CredentialRoot) -> MerkleRootResult:
+    return MerkleRootResult(
+        batch_id=root_record.batch_id,
+        root_id=root_record.root_no,
+        root_no=root_record.root_no,
+        merkle_root=root_record.merkle_root,
+        leaf_order_rule=root_record.leaf_order_rule,
+        odd_leaf_rule=root_record.odd_leaf_rule,
+        previous_root_hash=root_record.previous_root_hash,
+        current_root_hash=root_record.current_root_hash,
+        leaf_count=root_record.leaf_count,
+        tx_hash=root_record.tx_hash,
+    )
 
 
 # 模板管理功能还没做出来之前，生成证书用的模板内容暂时用这个默认值兜底
@@ -373,6 +389,24 @@ def evidence_batch(
     )
 
 
+@router.get("/{batch_id}/merkle-root", response_model=ApiResponse[MerkleRootResult])
+def get_merkle_root(
+    batch_id: int,
+    db: Session = Depends(get_db),
+) -> ApiResponse[MerkleRootResult]:
+    root_record = (
+        db.query(CredentialRoot)
+        .filter(CredentialRoot.batch_id == batch_id)
+        .first()
+    )
+    if root_record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"批次batch_id={batch_id}尚未生成Merkle Root",
+        )
+    return ApiResponse.success(_merkle_root_result(root_record))
+
+
 @router.post("/{batch_id}/merkle-root", response_model=ApiResponse[MerkleRootResult])
 def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResponse[MerkleRootResult]:
     """
@@ -439,17 +473,4 @@ def compute_merkle_root(batch_id: int, db: Session = Depends(get_db)) -> ApiResp
             tx_hash = None
             logger.exception("failed to persist chain transaction receipt")
 
-    return ApiResponse.success(
-        MerkleRootResult(
-            batch_id=batch_id,
-            root_id=root_record.root_no,
-            root_no=root_record.root_no,
-            merkle_root=root_record.merkle_root,
-            leaf_order_rule=root_record.leaf_order_rule,
-            odd_leaf_rule=root_record.odd_leaf_rule,
-            previous_root_hash=root_record.previous_root_hash,
-            current_root_hash=root_record.current_root_hash,
-            leaf_count=root_record.leaf_count,
-            tx_hash=tx_hash,
-        )
-    )
+    return ApiResponse.success(_merkle_root_result(root_record))
