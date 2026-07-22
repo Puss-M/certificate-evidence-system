@@ -45,14 +45,13 @@ caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
 ```
 
-`Caddyfile.example` 默认只公开公共验真页面、静态资源和公共验真 API，其他路径返回 `404`。在认证版本尚未完成服务器验收前，管理端仍应通过 SSH 隧道访问；不得为方便测试直接扩大公共验真域名的白名单。
+`Caddyfile.example` 默认只公开公共验真页面、静态资源和公共验真 API，其他路径返回 `404`。认证版本完成服务器验收后，才可按“项目组协作后台”中的约束启用受限管理入口；不能为演示账号或未鉴权接口扩大白名单。
 
 ## 项目组协作后台
 
-认证版本发布后，`verify.lotusrain.net` 仍只提供公共验真；后台使用独立的
-`admin.verify.lotusrain.net`。启用前必须先在 DNS 创建该子域的 A/AAAA 记录并指向本服务器，
-然后将 `Caddyfile.example` 的两个站点块导入 Caddy。不要为方便测试而在公共验真域名白名单中
-增加 `/login`、`/student` 或 `/api/admin/*`。
+认证版本发布后，后台优先使用独立的 `admin.verify.lotusrain.net`。启用前必须先在 DNS 创建该子域的
+A/AAAA 记录并指向本服务器，然后将 `Caddyfile.example` 的两个站点块导入 Caddy。DNS 未就绪时，只能
+使用下面定义的同域受限回退；不得放行 `/student`、文档、健康检查或任何未受后端 JWT 与角色鉴权保护的接口。
 
 认证迁移只新增 `users`、`invitations` 和 `auth_sessions` 表。首次部署后，在服务器交互式创建
 首个管理员，命令会安全读取密码，不要通过命令参数、环境变量、聊天记录或仓库传递密码：
@@ -65,6 +64,10 @@ docker compose exec backend python -m scripts.create_admin
 管理员登录管理后台后可创建一次性教师邀请链接。邀请码原文只会在创建时展示一次，应通过可信
 渠道发送；禁用账号会撤销该账号所有有效登录。上线前必须先备份数据库、输出目录和 Caddy 配置，
 并完成未登录 `401`、越权 `403`、邀请码重复使用失败、禁用账号令牌失效和教师签发证书的验收。
+
+若 `admin.verify.lotusrain.net` 的 DNS 尚未就绪，示例 Caddyfile 提供同域受限回退入口：仅放行
+`/login`、`/register`、指定管理页面、`/api/auth/*` 和 `/api/admin/*`。该回退依赖本版本的 JWT
+和后端角色鉴权，不能用于演示账号版本；`/student`、文档、健康检查和其他 API 仍返回 `404`。
 
 公共验真 API 默认按来源 IP 限制为每分钟 30 个请求、允许 10 个突发请求，并将上传文件限制为 8 MB。公网运行时仍需定期检查审计日志增长情况。
 

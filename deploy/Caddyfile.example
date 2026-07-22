@@ -5,7 +5,17 @@ verify.lotusrain.net {
 		path /public/verify /public/verify/* /api/verification/* /api/public/verify/* /assets/* /favicon.ico
 	}
 
+	# 当管理子域 DNS 尚未就绪时的受限协作入口。所有管理 API 仍由 FastAPI
+	# 强制执行 JWT 与角色鉴权；学生端、文档和健康检查不在此白名单内。
+	@team_management {
+		path /login /register /dashboard /projects /students /templates /batches /certificates /chain /audit /accounts /403 /api/auth/* /api/admin/*
+	}
+
 	handle @public_verify {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	handle @team_management {
 		reverse_proxy 127.0.0.1:18080
 	}
 
