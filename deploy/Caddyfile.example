@@ -1,0 +1,19 @@
+verify.lotusrain.net {
+	encode zstd gzip
+
+	@public_verify {
+		path /public/verify /public/verify/* /api/verification/* /api/public/verify/* /assets/* /favicon.ico
+	}
+
+	handle @public_verify {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+
+	header {
+		-Server
+	}
+}
