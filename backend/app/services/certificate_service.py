@@ -18,13 +18,17 @@
 """
 
 import hashlib
+import io
 import os
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import BinaryIO
 
-from reportlab.lib.pagesizes import A4
+from PIL import Image
+from reportlab.lib.colors import Color
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
@@ -37,6 +41,7 @@ from app.models.certificate import Certificate, CertificateStatus
 from app.models.evidence_receipt import EvidenceReceipt
 from app.models.student import Student
 from app.core.config import settings
+from app.services.template_service import DEFAULT_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -46,11 +51,32 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "certificates"
 
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+_FONT = "STSong-Light"
 
 VERIFY_BASE_URL = "https://cert-evidence-system.local/verify"  # 演示用占位域名，部署时替换
 
 # 证书编号 / 回执 block_height 是"查最大值+1"，并发冲突时靠重试解决，这是重试上限
 MAX_GENERATE_ATTEMPTS = 5
+
+# 导师签章图片固定长宽比（宽:高），上传的图片比例不符就居中裁剪成这个比例，
+# 见 load_and_crop_signature()。
+MENTOR_SIGNATURE_RATIO = 4.0
+
+# 证书视觉设计的配色（对应 frontend/src/styles/global.css 里 .certificate-border
+# 等类目前的"证书模板预览"效果图——这是目前唯一的设计基准，PDF生成要往这个
+# 效果对齐，而不是各画各的）。
+_GOLD = Color(182 / 255, 139 / 255, 63 / 255)
+_TITLE_COLOR = Color(114 / 255, 83 / 255, 31 / 255)
+_META_COLOR = Color(96 / 255, 87 / 255, 71 / 255)
+_SEAL_COLOR = Color(199 / 255, 72 / 255, 58 / 255)
+_YEAR_COLOR = Color(162 / 255, 124 / 255, 58 / 255)
+_TEXT_COLOR = Color(0.06, 0.09, 0.16)
+
+# 证书页面比例——对应"证书模板预览"CSS里 .certificate-border 实际渲染出来的
+# 比例（抽屉宽680px、内容区约600px、min-height 470px，约 600:470 ≈ 1.28:1），
+# 不是信纸/A4那种更细长（约1.41:1）的比例，之前用 landscape(A4) 是错的。
+_PAGE_WIDTH = 740.0
+_PAGE_HEIGHT = 578.0
 
 
 def _build_verify_url(certificate_no: str) -> str:
@@ -86,46 +112,309 @@ def _generate_qrcode(verify_url: str, qr_path: Path) -> None:
     img.save(qr_path)
 
 
-def _generate_pdf(certificate_no: str, student: Student, template: dict,
-                   issue_date: datetime, qr_code_path: Path, pdf_path: Path) -> None:
-    c = canvas.Canvas(str(pdf_path), pagesize=A4)
-    width, height = A4
+def load_and_crop_signature(file_bytes: bytes, *, target_ratio: float = MENTOR_SIGNATURE_RATIO) -> Image.Image:
+    """
+    导师签章图片固定宽:高=4:1（MENTOR_SIGNATURE_RATIO）。上传的图片比例不符，
+    居中裁剪成这个比例（不是缩放拉伸变形，也不是加白边）——裁多余的边，保留
+    图片中间部分。这张图只在当次批量生成里用，不落库、不关联模板，见
+    certificate_batches.generate_batch_with_signature()。
+    """
+    image = Image.open(io.BytesIO(file_bytes))
+    image = image.convert("RGBA")
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        raise ValueError("签章图片尺寸无效")
 
-    c.setFont("STSong-Light", 26)
-    c.drawCentredString(width / 2, height - 130, "结 业 证 书")
+    current_ratio = width / height
+    if current_ratio > target_ratio:
+        new_width = max(1, round(height * target_ratio))
+        left = (width - new_width) // 2
+        image = image.crop((left, 0, left + new_width, height))
+    elif current_ratio < target_ratio:
+        new_height = max(1, round(width / target_ratio))
+        top = (height - new_height) // 2
+        image = image.crop((0, top, width, top + new_height))
+    return image
 
-    c.setFont("STSong-Light", 13)
-    lines = [
-        f"姓名：{student.student_name}　　学号：{student.student_no}",
-        "",
-        f"经考核，已完成「{template['project_name']}」全部课程内容，",
-        f"成绩等级：{template['grade_level']}，特发此证。",
-        "",
-        f"颁发机构：{template['institution_name']}",
-        f"证书编号：{certificate_no}",
-        f"颁发日期：{issue_date.strftime('%Y年%m月%d日')}",
-    ]
-    y = height - 210
-    for line in lines:
-        c.drawCentredString(width / 2, y, line)
-        y -= 28
 
-    qr_size = 62
-    c.drawImage(
-        str(qr_code_path),
-        width - qr_size - 60,
-        50,
-        width=qr_size,
-        height=qr_size,
-        preserveAspectRatio=True,
-        mask="auto",
-    )
-    c.setFont("STSong-Light", 8)
-    c.drawCentredString(width - qr_size / 2 - 60, 40, "扫码验真")
+def _draw_spaced_centered(c: canvas.Canvas, text: str, center_x: float, y: float,
+                           font_size: float, extra_space: float, color: Color) -> None:
+    """带字间距的居中文字——参考设计里标题、'年份·CERTIFICATE'这类大字都是
+    letter-spacing拉开的，reportlab没有现成的letter-spacing参数，手动按字符
+    宽度累加着画。"""
+    if not text:
+        return
+    c.setFont(_FONT, font_size)
+    c.setFillColor(color)
+    widths = [pdfmetrics.stringWidth(ch, _FONT, font_size) for ch in text]
+    total = sum(widths) + extra_space * max(len(text) - 1, 0)
+    x = center_x - total / 2
+    for ch, w in zip(text, widths):
+        c.drawString(x, y, ch)
+        x += w + extra_space
 
-    c.setFont("STSong-Light", 8)
-    c.drawString(60, 66, "本证书内容哈希已写入本地存证链。")
-    c.drawString(60, 52, "（模拟数据，仅用于课程实训演示）")
+
+def _wrap_cjk_text(text: str, font_size: float, max_width: float) -> list[str]:
+    """按字符宽度手动换行——中文不能按空格分词，用stringWidth逐字累加，
+    超过可用宽度就换行。"""
+    lines: list[str] = []
+    current = ""
+    for ch in text:
+        trial = current + ch
+        if current and pdfmetrics.stringWidth(trial, _FONT, font_size) > max_width:
+            lines.append(current)
+            current = ch
+        else:
+            current = trial
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _generate_pdf(
+    certificate_no: str,
+    student: Student,
+    template: dict,
+    issue_date: datetime,
+    qr_code_path: Path | BinaryIO,
+    pdf_path: Path | BinaryIO,
+    *,
+    mentor_signature_image: Image.Image | None = None,
+) -> None:
+    """
+    证书视觉设计对齐"证书模板预览"效果图（frontend/src/styles/global.css的
+    .certificate-border系列样式）：金色双线边框、纯白底、衬线大标题、称谓、
+    正文、两栏信息、footer机构+日期+导师签章、印章盖在footer文字上（不再
+    压二维码）、右下角二维码。
+
+    template 固定接受这几项：template_name（不上版面，只做下载文件名用，见
+    admin.download_certificate）、institution_name、course_name、project_name、
+    certificate_title、issue_year、content——其中 content 允许为空，为空就跳过
+    整段正文不画。template['fields'] 决定学生姓名/证书编号/成绩等级/导师签章/
+    签发日期/验真二维码这6项要不要画：没在fields里，或者对应的值本身是空的，
+    这一行/这个元素就整个跳过（不留占位空白，紧跟着后面的内容走）。
+    """
+    fields = template.get("fields") or DEFAULT_FIELDS
+
+    def enabled(field_name: str) -> bool:
+        return field_name in fields
+
+    page_size = (_PAGE_WIDTH, _PAGE_HEIGHT)
+    width, height = page_size
+    dest = str(pdf_path) if isinstance(pdf_path, Path) else pdf_path
+    c = canvas.Canvas(dest, pagesize=page_size)
+
+    # ---- 金色双线边框（对应 CSS 的 border:8px double） ----
+    outer_margin = 32
+    border_gap = 6
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(1.3)
+    c.rect(outer_margin, outer_margin, width - 2 * outer_margin, height - 2 * outer_margin, stroke=1, fill=0)
+    inner_margin = outer_margin + border_gap
+    c.rect(inner_margin, inner_margin, width - 2 * inner_margin, height - 2 * inner_margin, stroke=1, fill=0)
+    # 内部背景固定纯白（不再是偏黄的米色），画布默认就是白底，这里不需要额外填色。
+
+    content_left = inner_margin + 44
+    content_right = width - inner_margin - 44
+    content_width = content_right - content_left
+    center_x = width / 2
+
+    # ---- 字号/行距整体调大一档：之前整块内容缩在画面上方，字也偏小，
+    # 下面留了一大截空白——用户反馈"看到太空了都能加大一下字号"。----
+    CAPTION_FONT, CAPTION_GAP = 12, 42
+    TITLE_FONT, TITLE_GAP = 34, 56
+    SALUTATION_FONT, SALUTATION_GAP = 16, 36
+    BODY_FONT, BODY_LINE_H, BODY_PARA_GAP = 14, 23, 10
+    META_FONT, META_ROW_GAP, GAP_AFTER_META = 13, 25, 18
+    FOOTER_NAME_FONT, FOOTER_META_FONT, FOOTER_GAP = 16, 13, 25
+
+    # STSong-Light（Adobe-GB1 CID字体）不认U+00B7这个西文中点，字形会变成方框
+    # 缺字符号——这里用日文假名的中点U+30FB代替，视觉上跟CSS设计里的"·"一致，
+    # 而且这个字符在这个CID字体里确实有字形（已经用glyph_test.pdf验证过）。
+    issue_year = template.get("issue_year") or str(issue_date.year)
+    title = template.get("certificate_title") or "实训结业证书"
+    show_salutation = enabled("student_name") and bool(student.student_name)
+
+    content_text = (template.get("content") or "").strip()
+    wrapped_lines: list[str] = []
+    if content_text:
+        for paragraph in content_text.split("\n"):
+            wrapped_lines.extend(_wrap_cjk_text("　　" + paragraph, BODY_FONT, content_width))
+
+    meta_columns = (content_left, center_x + 8)
+    row1 = [(label, value) for label, value in (
+        ("课程", template.get("course_name") or ""),
+        ("项目", template.get("project_name") or ""),
+    ) if value]
+    row2 = [(label, value) for label, value in (
+        ("成绩等级", template.get("grade_level") or "" if enabled("grade_level") else ""),
+        ("证书编号", certificate_no if enabled("certificate_no") else ""),
+    ) if value]
+
+    institution_name = template.get("institution_name") or ""
+    show_institution = bool(institution_name)
+    show_issue_date = enabled("issue_date")
+    show_mentor_sig = enabled("mentor_signature")
+
+    def run_layout(start_y: float, draw: bool) -> tuple[float, float]:
+        """走一遍从年份/标题到footer的完整版面流程。draw=False 时只挪
+        y坐标、不真的落笔——用来预先量出整块内容的总高度，再据此把
+        整块内容在画面里上下居中，而不是永远死贴着上边缘。返回
+        (last_y, footer_top)：last_y 是最后一个实际画出的元素的y坐标
+        （dry run时用来算总高度），footer_top 是机构名那一行的y坐标
+        （画印章要用）。"""
+        y = start_y
+        last_y = y
+        footer_top = y
+
+        if draw:
+            _draw_spaced_centered(c, f"{issue_year} ・ CERTIFICATE", center_x, y, CAPTION_FONT, 3, _YEAR_COLOR)
+        last_y = y
+        y -= CAPTION_GAP
+
+        if draw:
+            _draw_spaced_centered(c, title, center_x, y, TITLE_FONT, 10, _TITLE_COLOR)
+        last_y = y
+        y -= TITLE_GAP
+
+        if show_salutation:
+            if draw:
+                c.setFont(_FONT, SALUTATION_FONT)
+                c.setFillColor(_TEXT_COLOR)
+                c.drawString(content_left, y, f"{student.student_name} 同学：")
+            last_y = y
+            y -= SALUTATION_GAP
+
+        if wrapped_lines:
+            if draw:
+                c.setFont(_FONT, BODY_FONT)
+                c.setFillColor(_TEXT_COLOR)
+            for wline in wrapped_lines:
+                if draw:
+                    c.drawString(content_left, y, wline)
+                last_y = y
+                y -= BODY_LINE_H
+            y -= BODY_PARA_GAP
+
+        if row1:
+            if draw:
+                c.setFont(_FONT, META_FONT)
+                c.setFillColor(_META_COLOR)
+                for index, (label, value) in enumerate(row1):
+                    x = meta_columns[index] if index < len(meta_columns) else meta_columns[-1]
+                    c.drawString(x, y, f"{label}：{value}")
+            last_y = y
+            y -= META_ROW_GAP
+        if row2:
+            if draw:
+                c.setFont(_FONT, META_FONT)
+                c.setFillColor(_META_COLOR)
+                for index, (label, value) in enumerate(row2):
+                    x = meta_columns[index] if index < len(meta_columns) else meta_columns[-1]
+                    c.drawString(x, y, f"{label}：{value}")
+            last_y = y
+            y -= META_ROW_GAP
+        if row1 or row2:
+            y -= GAP_AFTER_META
+
+        footer_top = y
+
+        if show_institution:
+            if draw:
+                c.setFont(_FONT, FOOTER_NAME_FONT)
+                c.setFillColor(_TEXT_COLOR)
+                c.drawString(content_left, y, institution_name)
+            last_y = y
+            y -= FOOTER_GAP
+
+        if show_issue_date:
+            if draw:
+                c.setFont(_FONT, FOOTER_META_FONT)
+                c.setFillColor(_META_COLOR)
+                c.drawString(content_left, y, issue_date.strftime("%Y年%m月%d日"))
+            last_y = y
+            y -= FOOTER_GAP
+
+        if show_mentor_sig:
+            label = "导师签章："
+            label_width = pdfmetrics.stringWidth(label, _FONT, FOOTER_META_FONT)
+            line_start = content_left + label_width + 4
+            line_end = content_left + 210
+            if draw:
+                c.setFont(_FONT, FOOTER_META_FONT)
+                c.setFillColor(_META_COLOR)
+                c.drawString(content_left, y, label)
+                if mentor_signature_image is not None:
+                    sig_height = 22
+                    sig_width = sig_height * MENTOR_SIGNATURE_RATIO
+                    c.drawImage(
+                        ImageReader(mentor_signature_image),
+                        line_start,
+                        y - 3,
+                        width=min(sig_width, line_end - line_start),
+                        height=sig_height,
+                        preserveAspectRatio=True,
+                        mask="auto",
+                    )
+                c.setStrokeColor(_META_COLOR)
+                c.setLineWidth(0.6)
+                c.line(line_start, y - 3, line_end, y - 3)
+            last_y = y
+
+        return last_y, footer_top
+
+    # ---- 先量一遍总高度，把整块内容（年份/标题到footer）在画面里上下
+    # 居中——不然内容一少，就全堆在画面上方，下面空一大截。左右方向本来
+    # 就是 content_left/content_right 对称留白，天然居中，不用再处理。----
+    frame_top = height - inner_margin
+    frame_bottom = inner_margin
+    dry_last_y, _ = run_layout(0.0, draw=False)
+    block_span = -dry_last_y  # 从起笔到最后一个元素之间的总高度
+    start_y = (frame_top + frame_bottom + block_span) / 2
+    start_y = min(start_y, frame_top - 34)  # 内容特别多时至少留34pt顶部呼吸空间
+
+    last_y, footer_top = run_layout(start_y, draw=True)
+
+    # 印章：机构名第一个字，双线圆环，半透明，盖在footer文字上（不再压二维码，
+    # 挪到左下角，跟CSS里 position:absolute;right:42px;bottom:35px 的效果
+    # 对应，只是位置换成左边）。
+    if show_institution:
+        seal_char = institution_name[0]
+        seal_cx = content_left + 68
+        seal_cy = footer_top - 6
+        c.saveState()
+        c.setStrokeColor(_SEAL_COLOR)
+        c.setFillColor(_SEAL_COLOR)
+        try:
+            c.setStrokeAlpha(0.75)
+            c.setFillAlpha(0.75)
+        except AttributeError:
+            pass  # 极少数老版本reportlab没有alpha支持，退化成不透明也能接受
+        c.setLineWidth(1.8)
+        c.circle(seal_cx, seal_cy, 32, stroke=1, fill=0)
+        c.circle(seal_cx, seal_cy, 26, stroke=1, fill=0)
+        c.setFont(_FONT, 26)
+        c.drawCentredString(seal_cx, seal_cy - 9, seal_char)
+        c.restoreState()
+
+    if enabled("qr_code"):
+        qr_size = 72
+        qr_x = content_right - qr_size
+        # 二维码跟footer最后一行基本齐平（而不是死死焊在画面绝对底部），
+        # 这样footer整体上移变化时二维码始终跟它保持在同一视觉高度上。
+        qr_y = max(inner_margin + 20, last_y - 6)
+        c.drawImage(
+            ImageReader(qr_code_path),
+            qr_x,
+            qr_y,
+            width=qr_size,
+            height=qr_size,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+        c.setFont(_FONT, 8.5)
+        c.setFillColor(_META_COLOR)
+        c.drawCentredString(qr_x + qr_size / 2, qr_y - 14, "扫码验真")
 
     c.showPage()
     c.save()
@@ -213,6 +502,7 @@ def generate_certificate(
     batch_id: int | str | None = None,
     output_dir: Path | None = None,
     previous_certificate_no: str | None = None,
+    mentor_signature_image: Image.Image | None = None,
 ) -> Certificate:
     student = db.get(Student, student_id)
     if student is None:
@@ -238,7 +528,10 @@ def generate_certificate(
         temp_pdf_path = target_dir / f".tmp-{temp_token}.pdf"
 
         _generate_qrcode(verify_url, temp_qr_path)
-        _generate_pdf(certificate_no, student, template, issue_date, temp_qr_path, temp_pdf_path)
+        _generate_pdf(
+            certificate_no, student, template, issue_date, temp_qr_path, temp_pdf_path,
+            mentor_signature_image=mentor_signature_image,
+        )
         certificate_hash = _compute_sha256(str(temp_pdf_path))
 
         final_qr_path = target_dir / f"{certificate_no}_qrcode.png"
@@ -309,6 +602,7 @@ def generate_certificate_batch(
     issue_date: datetime,
     batch_id: int | str | None,
     output_dir: Path | None = None,
+    mentor_signature_image: Image.Image | None = None,
 ) -> list[Certificate]:
     return [
         generate_certificate(
@@ -318,6 +612,44 @@ def generate_certificate_batch(
             issue_date=issue_date,
             batch_id=batch_id,
             output_dir=output_dir,
+            mentor_signature_image=mentor_signature_image,
         )
         for student_id in student_ids
     ]
+
+
+# ---------------------------------------------------------------------------
+# 证书模板预览：给"证书模板管理"页面的预览抽屉用真实生成逻辑渲染一份示例PDF，
+# 不再是前端写死假数据的CSS效果图。用固定的示例数据（张三同学、示例证书编号），
+# 不落库、不占用真实的证书编号序列，也不消耗回执链的block_height。字段是否
+# 显示完全走 template['fields']，跟真实生成时的规则一致——没勾选的字段这里
+# 也不会出现，跟"不选择什么字段就会留空"的预期行为对齐。
+# ---------------------------------------------------------------------------
+class _PreviewStudent:
+    """预览用的示例学生数据，故意不用真的 Student ORM 实例（不需要、也不应该
+    往数据库里插一条假学生记录），_generate_pdf 只读 student_name 这一个属性。"""
+
+    student_name = "张三"
+    student_no = "S20260000"
+
+
+def render_certificate_preview(template: dict) -> bytes:
+    demo_certificate_no = "CERT-20260714-0001"
+    demo_issue_date = datetime.utcnow()
+    demo_template = {**template, "grade_level": template.get("grade_level") or "优秀"}
+
+    qr_buffer = io.BytesIO()
+    qrcode.make(f"preview-{demo_certificate_no}").save(qr_buffer, format="PNG")
+    qr_buffer.seek(0)
+
+    pdf_buffer = io.BytesIO()
+    _generate_pdf(
+        demo_certificate_no,
+        _PreviewStudent(),
+        demo_template,
+        demo_issue_date,
+        qr_buffer,
+        pdf_buffer,
+        mentor_signature_image=None,
+    )
+    return pdf_buffer.getvalue()

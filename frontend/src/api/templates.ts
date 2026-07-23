@@ -89,3 +89,12 @@ export async function deleteTemplate(id: number) {
   if (useMock) { await wait(); templates.splice(templates.findIndex(x => x.template_id === id), 1); return }
   await request.delete(`/admin/templates/${id}`)
 }
+
+// 用真实生成逻辑渲染出来的示例PDF（张三同学、示例证书编号），不是之前那种
+// 前端纯CSS画的假数据效果图——预览里能不能看到某个字段，规则跟真实生成时
+// 完全一致（模板没勾选的字段这里也不会出现）。mock模式下没有真实PDF可返回，
+// 调用方要检查Blob是不是空的（size===0）来判断走没走真实接口。
+export async function previewTemplate(id: number): Promise<Blob> {
+  if (useMock) { await wait(); return new Blob() }
+  return await request.get(`/admin/templates/${id}/preview`, { responseType: 'blob' }) as unknown as Blob
+}
