@@ -54,7 +54,7 @@ Vite会把 `/api` 代理到 `VITE_PROXY_TARGET`，未配置时默认使用 `http
 
 前后端不在同一台电脑时，只在未提交的 `.env.development` 中把 `VITE_PROXY_TARGET` 改为 `http://<后端电脑IP>:8000`。不要把真实局域网 IP 或 `.env.development` 提交到仓库。
 
-学生端当前以 `student_no` 查询参数作为模拟身份，只用于课程演示数据，不是正式登录鉴权。手机扫码演示时使用 `npm run dev -- --host 0.0.0.0` 启动前端，并把后端 `PUBLIC_VERIFY_BASE_URL` 设置为 `http://<局域网IP>:5173/public/verify` 后重新生成证书二维码。
+学生端通过 `/student/login` 登录。管理员从已导入学生名单开通账号后，学生使用学号和一次性初始密码登录并完成改密；列表、详情、PDF 下载和二维码请求均使用 JWT 绑定的 `student_id`，不再传递 `student_no` 查询参数。手机扫码演示时使用 `npm run dev -- --host 0.0.0.0` 启动前端，并把后端 `PUBLIC_VERIFY_BASE_URL` 设置为 `http://<局域网IP>:5173/public/verify` 后重新生成证书二维码。
 
 ## 统一响应
 

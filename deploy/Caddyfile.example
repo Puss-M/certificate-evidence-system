@@ -11,9 +11,9 @@ verify.lotusrain.net {
 		path /login /register /dashboard /projects /students /templates /batches /certificates /chain /audit /accounts /403 /api/auth/* /api/admin/*
 	}
 
-	# 经项目负责人明确批准的临时学生演示入口。学生端仍以 student_no 参数
-	# 查询，不是正式登录；仅可使用模拟数据，不能扩大为其他 API 或诊断路径。
-	@student_demo {
+	# 学生登录入口与受 JWT 保护的本人证书接口。student_no 不能作为查询参数
+	# 选择访问对象；该白名单不扩大到其他 API 或诊断路径。
+	@student_portal {
 		path /student /student/* /api/student/certificates /api/student/certificates/*
 	}
 
@@ -25,7 +25,7 @@ verify.lotusrain.net {
 		reverse_proxy 127.0.0.1:18080
 	}
 
-	handle @student_demo {
+	handle @student_portal {
 		reverse_proxy 127.0.0.1:18080
 	}
 

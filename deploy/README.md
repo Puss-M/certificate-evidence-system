@@ -45,13 +45,13 @@ caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy
 ```
 
-`Caddyfile.example` 默认只公开公共验真页面、静态资源和公共验真 API，其他路径返回 `404`。认证版本完成服务器验收后，才可按“项目组协作后台”中的约束启用受限管理入口。当前还包含项目负责人明确批准的临时学生演示入口；它只服务模拟数据联调，不能被表述为正式学生认证。
+`Caddyfile.example` 默认只公开公共验真页面、静态资源和公共验真 API，其他路径返回 `404`。认证版本完成服务器验收后，才可按“项目组协作后台”中的约束启用受限管理入口。学生页和 `/api/student/certificates*` 已纳入受限入口，但后端必须通过 `STUDENT` JWT 和绑定的 `student_id` 决定证书归属。
 
 ## 项目组协作后台
 
 认证版本发布后，后台优先使用独立的 `admin.verify.lotusrain.net`。启用前必须先在 DNS 创建该子域的
 A/AAAA 记录并指向本服务器，然后将 `Caddyfile.example` 的两个站点块导入 Caddy。DNS 未就绪时，只能
-使用下面定义的同域受限回退。默认不得放行文档、健康检查或任何未受后端 JWT 与角色鉴权保护的接口；本版本额外放行 `/student/*` 以及当前证书查询接口 `/api/student/certificates` 和其子路径作为临时学号查询演示，限制见下一段。
+使用下面定义的同域受限回退。默认不得放行文档、健康检查或任何未受后端 JWT 与角色鉴权保护的接口；本版本放行 `/student/*` 与 `/api/student/certificates*` 供学生登录及访问本人证书，限制见下一段。
 
 认证迁移只新增 `users`、`invitations` 和 `auth_sessions` 表。首次部署后，在服务器交互式创建
 首个管理员，命令会安全读取密码，不要通过命令参数、环境变量、聊天记录或仓库传递密码：
@@ -67,7 +67,7 @@ docker compose exec backend python -m scripts.create_admin
 
 若 `admin.verify.lotusrain.net` 的 DNS 尚未就绪，示例 Caddyfile 提供同域受限回退入口：仅放行
 `/login`、`/register`、指定管理页面、`/api/auth/*` 和 `/api/admin/*`。该回退依赖本版本的 JWT
-和后端角色鉴权。经项目负责人批准，另放行 `/student/*` 以及当前证书查询接口 `/api/student/certificates` 和其子路径，以演示 `student_no` 查询、下载和二维码；这不是登录机制，且只能使用模拟学生数据。`/docs`、健康检查和其他 API 仍返回 `404`。完成演示后应移除此学生白名单，或先实现学生账号绑定与 JWT 再长期开放。
+和后端角色鉴权。另放行 `/student/*` 以及 `/api/student/certificates*`，供学生完成首次改密、查看本人证书、下载 PDF 和获取二维码。学生身份只能从 JWT 的 `student_id` 绑定解析，不能通过 `student_no` 查询参数选择。`/docs`、健康检查和其他 API 仍返回 `404`。
 
 公共验真 API 默认按来源 IP 限制为每分钟 30 个请求、允许 10 个突发请求，并将上传文件限制为 8 MB。公网运行时仍需定期检查审计日志增长情况。
 
