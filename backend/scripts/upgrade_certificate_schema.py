@@ -176,6 +176,11 @@ def main() -> None:
     if _column_names("certificate_templates"):
         _add_column_if_missing(
             "certificate_templates",
+            "project_id",
+            "project_id INT NULL",
+        )
+        _add_column_if_missing(
+            "certificate_templates",
             "institution_name",
             "institution_name VARCHAR(200) NOT NULL DEFAULT '示范学院'",
         )

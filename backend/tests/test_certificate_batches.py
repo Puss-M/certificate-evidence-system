@@ -159,11 +159,12 @@ def test_delete_batch_with_generated_certificates_returns_conflict(db_session) -
     assert "证书" in delete_resp.json()["message"]
 
 
-def test_generate_batch_rejects_template_id_that_does_not_exist(db_session) -> None:
+def test_create_batch_rejects_template_id_that_does_not_exist(db_session) -> None:
     student = Student(student_no="2023412", student_name="missing template student")
     db_session.add(student)
     db_session.commit()
-    batch_id = asyncio.run(
+
+    response = asyncio.run(
         _post_json(
             "/api/admin/batches",
             {
@@ -172,14 +173,11 @@ def test_generate_batch_rejects_template_id_that_does_not_exist(db_session) -> N
                 "student_ids": [student.student_id],
             },
         )
-    ).json()["data"]["batch_id"]
+    )
 
-    generate_resp = asyncio.run(_post_json(f"/api/admin/batches/{batch_id}/generate"))
-
-    assert generate_resp.status_code == 404
-    assert "template_id=999999" in generate_resp.json()["message"]
+    assert response.status_code == 404
+    assert "template_id=999999" in response.json()["message"]
     assert db_session.query(Certificate).count() == 0
-
 
 def test_generate_batch_creates_certificate_for_each_stored_student(db_session) -> None:
     student1 = Student(student_no="2023403", student_name="小刚", class_name="1班")
@@ -328,3 +326,99 @@ def test_generate_batch_reports_failure_for_missing_student_without_blocking_oth
 def test_generate_batch_returns_404_for_unknown_batch(db_session) -> None:
     response = asyncio.run(_post_json("/api/admin/batches/99999/generate"))
     assert response.status_code == 404
+
+def test_pr45_create_batch_from_template_and_generate_selected_students(db_session) -> None:
+    project = Project(
+        project_name="PR45 绑定项目",
+        teacher_name="实训教师",
+        status="ACTIVE",
+    )
+    template = CertificateTemplate(
+        template_name="PR45 绑定模板",
+        template_code="TPL-PR45",
+        institution_name="计算机学院",
+        content='{"project_name":"旧项目名称","grade_level":"优秀"}',
+        status="ACTIVE",
+    )
+    student = Student(student_no="2023450", student_name="PR45 学生")
+    db_session.add_all([project, template, student])
+    db_session.flush()
+    template.project_id = project.project_id
+    db_session.commit()
+
+    create_response = asyncio.run(
+        _post_json("/api/admin/batches", {"template_id": template.template_id})
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()["data"]
+    assert created["batch_name"]
+    assert created["template_id"] == template.template_id
+    assert created["project_id"] == project.project_id
+    assert created["project_name"] == project.project_name
+    assert created["student_count"] == 0
+
+    payload = {
+        "project_id": project.project_id,
+        "template_id": template.template_id,
+        "student_ids": [student.student_id],
+        "issue_date": "2026-07-23",
+    }
+    first = asyncio.run(
+        _post_json(f"/api/admin/batches/{created['batch_id']}/generate", payload)
+    )
+    repeated = asyncio.run(
+        _post_json(f"/api/admin/batches/{created['batch_id']}/generate", payload)
+    )
+
+    assert first.status_code == 200
+    assert first.json()["data"]["generated_count"] == 1
+    assert repeated.status_code == 200
+    assert repeated.json()["data"]["generated_count"] == 0
+    assert db_session.query(Certificate).count() == 1
+
+    listed = asyncio.run(_get_json("/api/admin/batches")).json()["data"]["records"][0]
+    assert listed["student_count"] == 1
+    assert listed["generated"] == 1
+
+
+def test_pr45_generate_rejects_project_that_does_not_match_template(db_session) -> None:
+    bound_project = Project(
+        project_name="模板绑定项目",
+        teacher_name="实训教师",
+        status="ACTIVE",
+    )
+    other_project = Project(
+        project_name="错误签发项目",
+        teacher_name="其他教师",
+        status="ACTIVE",
+    )
+    template = CertificateTemplate(
+        template_name="项目约束模板",
+        template_code="TPL-PROJECT-CONSTRAINT",
+        institution_name="计算机学院",
+        status="ACTIVE",
+    )
+    student = Student(student_no="2023451", student_name="项目校验学生")
+    db_session.add_all([bound_project, other_project, template, student])
+    db_session.flush()
+    template.project_id = bound_project.project_id
+    db_session.commit()
+    batch_id = asyncio.run(
+        _post_json("/api/admin/batches", {"template_id": template.template_id})
+    ).json()["data"]["batch_id"]
+
+    response = asyncio.run(
+        _post_json(
+            f"/api/admin/batches/{batch_id}/generate",
+            {
+                "project_id": other_project.project_id,
+                "template_id": template.template_id,
+                "student_ids": [student.student_id],
+                "issue_date": "2026-07-23",
+            },
+        )
+    )
+
+    assert response.status_code == 409
+    assert db_session.query(Certificate).count() == 0

@@ -154,6 +154,7 @@ class StudentPayload(BaseModel):
 class TemplatePayload(BaseModel):
     template_name: str | None = None
     name: str | None = None
+    project_id: int | None = None
     institution_name: str | None = None
     content_config: dict[str, Any] | None = None
     status: str | None = None
@@ -291,9 +292,15 @@ def _template_record(template: CertificateTemplate) -> dict[str, Any]:
     content_config = template_service.parse_content_config(template.content)
     institution_name = template.institution_name or template_service.DEFAULT_INSTITUTION_NAME
     status = template.status or "ACTIVE"
+    project_id = template.project_id or content_config.get("project_id")
+    try:
+        project_id = int(project_id) if project_id not in (None, "") else None
+    except (TypeError, ValueError):
+        project_id = None
     return {
         "template_id": template.template_id,
         "template_name": template.template_name,
+        "project_id": project_id,
         "institution_name": institution_name,
         "content_config": content_config,
         "status": status,
@@ -311,25 +318,45 @@ def _template_record(template: CertificateTemplate) -> dict[str, Any]:
     }
 
 
-def _validated_template_config(db: Session, content_config: dict[str, Any]) -> dict[str, Any]:
+def _validated_template_config(
+    db: Session,
+    content_config: dict[str, Any],
+    *,
+    project_id: int | None = None,
+    required: bool = False,
+) -> dict[str, Any]:
     """Keep a template's project reference and display name consistent."""
     config = dict(content_config)
-    project_id = config.get("project_id")
-    if project_id in (None, ""):
+    configured_project_id = config.get("project_id")
+    if project_id is not None and configured_project_id not in (None, ""):
+        try:
+            if int(configured_project_id) != project_id:
+                raise HTTPException(status_code=409, detail="模板项目与内容配置中的项目不一致")
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="content_config.project_id must be an integer",
+            ) from exc
+    selected_project_id = project_id if project_id is not None else configured_project_id
+    if selected_project_id in (None, ""):
+        if required:
+            raise HTTPException(status_code=422, detail="project_id is required")
         return config
     try:
-        project_id = int(project_id)
+        selected_project_id = int(selected_project_id)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="content_config.project_id must be an integer") from exc
-    project = db.get(Project, project_id)
+    project = db.get(Project, selected_project_id)
     if project is None:
-        raise HTTPException(status_code=404, detail=f"project_id={project_id} not found")
+        raise HTTPException(status_code=404, detail=f"project_id={selected_project_id} not found")
     config["project_id"] = project.project_id
     config["project_name"] = project.project_name
     return config
 
 
 def _template_is_bound_to_project(template: CertificateTemplate, project_id: int) -> bool:
+    if template.project_id == project_id:
+        return True
     value = template_service.parse_content_config(template.content).get("project_id")
     try:
         return int(value) == project_id
@@ -341,6 +368,7 @@ def _sync_bound_template_project_names(db: Session, project: Project) -> None:
     for template in db.query(CertificateTemplate).all():
         config = template_service.parse_content_config(template.content)
         if _template_is_bound_to_project(template, project.project_id):
+            template.project_id = project.project_id
             config["project_id"] = project.project_id
             config["project_name"] = project.project_name
             template.content = template_service.serialize_content_config(config)
@@ -364,9 +392,6 @@ def _batch_record(db: Session, batch: CertificateBatch) -> dict[str, Any]:
 
 def _certificate_record(db: Session, certificate: Certificate) -> dict[str, Any]:
     student = db.get(Student, certificate.student_id)
-    new_certificate = db.query(Certificate).filter(
-        Certificate.previous_certificate_no == certificate.certificate_no
-    ).first()
     issue_time = certificate.issue_time or certificate.created_at
 
     return {
@@ -389,8 +414,6 @@ def _certificate_record(db: Session, certificate: Certificate) -> dict[str, Any]
         "institution_name": certificate.institution_name,
         "issue_date": _format_date(issue_time),
         "evidence_status": "CONFIRMED" if certificate.receipt_id else "PENDING",
-        "previous_certificate_no": certificate.previous_certificate_no,
-        "new_certificate_no": new_certificate.certificate_no if new_certificate else None,
     }
 
 
@@ -576,7 +599,10 @@ def delete_project(project_id: int,
         raise HTTPException(status_code=404, detail="project not found")
     if db.query(CertificateBatch).filter(CertificateBatch.project_id == project_id).count():
         raise HTTPException(status_code=409, detail="该项目已被证书批次使用，不能删除")
-    if any(_template_is_bound_to_project(template, project_id) for template in db.query(CertificateTemplate).all()):
+    if db.query(CertificateTemplate).filter(CertificateTemplate.project_id == project_id).count() or any(
+        _template_is_bound_to_project(template, project_id)
+        for template in db.query(CertificateTemplate).all()
+    ):
         raise HTTPException(status_code=409, detail="该项目已被证书模板绑定，不能删除")
     db.delete(project)
     db.commit()
@@ -694,10 +720,16 @@ def list_templates(current: int = 1, size: int = 10, keyword: str | None = None,
 
 @router.post("/templates")
 def create_template(payload: TemplatePayload, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
-    content_config = _validated_template_config(db, payload.content_config or {})
+    content_config = _validated_template_config(
+        db,
+        payload.content_config or {},
+        project_id=payload.project_id,
+        required=True,
+    )
     template = CertificateTemplate(
         template_name=payload.template_name or payload.name or "Certificate Template",
         template_code=f"TPL-{int(datetime.utcnow().timestamp())}",
+        project_id=int(content_config["project_id"]),
         institution_name=payload.institution_name or template_service.DEFAULT_INSTITUTION_NAME,
         content=template_service.serialize_content_config(content_config),
         status=payload.status or "ACTIVE",
@@ -714,14 +746,27 @@ def update_template(template_id: int, payload: TemplatePayload,
     template = db.get(CertificateTemplate, template_id)
     if template is None:
         raise HTTPException(status_code=404, detail="template not found")
+    stored_config = template_service.parse_content_config(template.content)
+    project_id = payload.project_id if payload.project_id is not None else template.project_id
+    if project_id is None:
+        project_id = stored_config.get("project_id")
     if payload.template_name or payload.name:
         template.template_name = payload.template_name or payload.name or template.template_name
     if payload.institution_name is not None:
         template.institution_name = payload.institution_name
-    if payload.content_config is not None:
-        template.content = template_service.serialize_content_config(
-            _validated_template_config(db, payload.content_config)
-        )
+    content_config = (
+        dict(payload.content_config)
+        if payload.content_config is not None
+        else stored_config
+    )
+    content_config = _validated_template_config(
+        db,
+        content_config,
+        project_id=project_id,
+        required=True,
+    )
+    template.project_id = int(content_config["project_id"])
+    template.content = template_service.serialize_content_config(content_config)
     if payload.status is not None:
         template.status = payload.status
     db.commit()
@@ -945,54 +990,70 @@ def revoke_certificate(certificate_identifier: str, payload: RevokePayload,
 @router.post("/certificates/{certificate_id}/reissue")
 def reissue_certificate(certificate_id: int, payload: ReissuePayload,
                         db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
-    old_certificate = db.get(Certificate, certificate_id)
-    if old_certificate is None:
+    certificate = db.get(Certificate, certificate_id)
+    if certificate is None:
         raise HTTPException(status_code=404, detail="certificate not found")
-    if old_certificate.status != CertificateStatus.REVOKED.value:
+    if certificate.status != CertificateStatus.REVOKED.value:
         raise HTTPException(status_code=409, detail="仅已撤销证书可以补发")
 
-    new_certificate = certificate_service.generate_certificate(
+    old_certificate_no = certificate.certificate_no
+    replacement = certificate_service.generate_certificate(
         db,
-        student_id=old_certificate.student_id,
+        student_id=certificate.student_id,
         template=_certificate_template_dict(
             db,
-            old_certificate.template_id,
-            old_certificate.project_name,
+            certificate.template_id,
+            certificate.project_name,
         ),
         issue_date=_parse_issue_date(payload.issue_date),
-        batch_id=old_certificate.batch_id,
-        previous_certificate_no=old_certificate.certificate_no,
+        batch_id=certificate.batch_id,
     )
+    replacement_values = {
+        "certificate_no": replacement.certificate_no,
+        "template_id": replacement.template_id,
+        "project_name": replacement.project_name,
+        "institution_name": replacement.institution_name,
+        "issue_time": replacement.issue_time,
+        "pdf_path": replacement.pdf_path,
+        "certificate_hash": replacement.certificate_hash,
+        "qr_code_path": replacement.qr_code_path,
+        "verify_url": replacement.verify_url,
+        "receipt_id": replacement.receipt_id,
+        "status": CertificateStatus.VALID.value,
+        "root_id": replacement.root_id,
+        "previous_certificate_no": None,
+    }
+    replacement_receipt = db.query(EvidenceReceipt).filter(
+        EvidenceReceipt.receipt_no == replacement.receipt_id
+    ).one()
+    replacement_receipt.certificate_id = certificate.certificate_id
+    db.flush()
+    db.delete(replacement)
+    db.flush()
+    for field, value in replacement_values.items():
+        setattr(certificate, field, value)
 
-    old_certificate.status = CertificateStatus.REISSUED.value
     db.add(
         RevocationRecord(
-            certificate_id=old_certificate.certificate_id,
+            certificate_id=certificate.certificate_id,
             action_type="REISSUE",
             reason=payload.reason,
             operator="admin",
-            new_certificate_no=new_certificate.certificate_no,
+            new_certificate_no=certificate.certificate_no,
         )
     )
     db.add(
         AuditLog(
             action="证书补发",
             target_type="证书管理",
-            target_id=old_certificate.certificate_no[:64],
+            target_id=certificate.certificate_no[:64],
             operator="admin",
-            detail=f"{payload.reason}; new={new_certificate.certificate_no}",
+            detail=f"{payload.reason}; old={old_certificate_no}; new={certificate.certificate_no}",
         )
     )
     db.commit()
-    db.refresh(old_certificate)
-    db.refresh(new_certificate)
-    return ApiResponse.success(
-        {
-            "old_certificate": _certificate_record(db, old_certificate),
-            "new_certificate": _certificate_record(db, new_certificate),
-        }
-    )
-
+    db.refresh(certificate)
+    return ApiResponse.success(_certificate_record(db, certificate))
 
 @router.delete("/certificates/{certificate_id}")
 def delete_certificate(certificate_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:

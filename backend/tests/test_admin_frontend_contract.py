@@ -7,6 +7,7 @@ from app.main import app
 from app.models.certificate import Certificate, CertificateStatus
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
+from app.models.project import Project
 from app.models.revocation_record import RevocationRecord
 from app.models.student import Student
 from app.services import certificate_service
@@ -166,16 +167,25 @@ def test_admin_student_rejects_overlong_college(db_session) -> None:
 
 
 def test_admin_template_persists_configured_issuer_and_content(db_session) -> None:
+    project = Project(
+        project_name="证书存证项目",
+        teacher_name="实训教师",
+        status="ACTIVE",
+    )
+    db_session.add(project)
+    db_session.commit()
+
     created = asyncio.run(
         request_json(
             "POST",
             "/api/admin/templates",
             json={
                 "template_name": "自定义证书模板",
+                "project_id": project.project_id,
                 "institution_name": "计算机学院",
                 "content_config": {
                     "course_name": "软件开发实训",
-                    "project_name": "证书存证项目",
+                    "project_name": "不能覆盖真实项目名称",
                     "certificate_title": "实训证书",
                     "content": "已完成实训任务。",
                     "issue_year": "2026",
@@ -187,6 +197,7 @@ def test_admin_template_persists_configured_issuer_and_content(db_session) -> No
     )["data"]
 
     assert created["issuer"] == "计算机学院"
+    assert created["project_id"] == project.project_id
     assert created["course_name"] == "软件开发实训"
     assert created["project_name"] == "证书存证项目"
     assert created["certificate_title"] == "实训证书"
@@ -195,6 +206,7 @@ def test_admin_template_persists_configured_issuer_and_content(db_session) -> No
     assert listed[0]["issuer"] == "计算机学院"
     template_row = db_session.get(CertificateTemplate, created["template_id"])
     assert template_row.institution_name == "计算机学院"
+    assert template_row.project_id == project.project_id
     template_row.updated_at = datetime(2026, 1, 1)
     db_session.commit()
 
@@ -208,6 +220,23 @@ def test_admin_template_persists_configured_issuer_and_content(db_session) -> No
     assert updated["issuer"] == "信息工程学院"
     assert updated["updated_at"] != "2026-01-01 00:00:00"
 
+
+def test_admin_template_requires_real_project_binding(db_session) -> None:
+    missing_project = asyncio.run(
+        request_response(
+            "POST",
+            "/api/admin/templates",
+            json={
+                "template_name": "未绑定项目模板",
+                "project_id": 999999,
+                "institution_name": "计算机学院",
+                "content_config": {"project_name": "不存在的项目"},
+            },
+        )
+    )
+
+    assert missing_project.status_code == 404
+    assert db_session.query(CertificateTemplate).count() == 0
 
 def test_admin_template_enabled_filter_accepts_frontend_status(db_session) -> None:
     db_session.add_all(
@@ -413,7 +442,7 @@ def test_admin_legacy_batch_route_rejects_deleting_generated_batch(db_session) -
     assert db_session.get(CertificateBatch, batch.batch_id) is not None
 
 
-def test_admin_reissues_revoked_certificate(db_session) -> None:
+def test_admin_reissues_revoked_certificate_in_place_and_allows_revoke_again(db_session) -> None:
     student = Student(student_no="S20260010", student_name="Reissue Student")
     db_session.add(student)
     db_session.commit()
@@ -423,10 +452,11 @@ def test_admin_reissues_revoked_certificate(db_session) -> None:
         template=TEMPLATE,
         issue_date=datetime(2026, 7, 14),
     )
+    old_certificate_no = certificate.certificate_no
     asyncio.run(
         request_json(
             "POST",
-            f"/api/admin/certificates/{certificate.certificate_no}/revoke",
+            f"/api/admin/certificates/{old_certificate_no}/revoke",
             json={"reason": "certificate damaged"},
         )
     )
@@ -441,20 +471,22 @@ def test_admin_reissues_revoked_certificate(db_session) -> None:
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["old_certificate"]["status"] == CertificateStatus.REISSUED.value
-    assert data["new_certificate"]["previous_certificate_no"] == certificate.certificate_no
+    assert data["certificate_id"] == certificate.certificate_id
+    assert data["certificate_no"] != old_certificate_no
+    assert data["status"] == CertificateStatus.VALID.value
+    assert "previous_certificate_no" not in data
+    assert "new_certificate_no" not in data
+    assert db_session.query(Certificate).count() == 1
 
-    repeated_response = asyncio.run(
+    revoke_again = asyncio.run(
         request_response(
             "POST",
-            f"/api/admin/certificates/{certificate.certificate_id}/reissue",
-            json={"reason": "duplicate reissue", "issue_date": "2026-07-16"},
+            f"/api/admin/certificates/{data['certificate_no']}/revoke",
+            json={"reason": "补发证书再次撤销"},
         )
     )
-
-    assert repeated_response.status_code == 409
-    assert db_session.query(Certificate).count() == 2
-
+    assert revoke_again.status_code == 200
+    assert revoke_again.json()["data"]["status"] == CertificateStatus.REVOKED.value
 
 def test_admin_rejects_reissuing_certificate_that_is_not_revoked(db_session) -> None:
     student = Student(student_no="S20260011", student_name="Valid Certificate Student")

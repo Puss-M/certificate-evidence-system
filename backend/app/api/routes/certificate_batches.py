@@ -86,15 +86,16 @@ def _next_batch_no(db: Session) -> str:
 def create_batch_record(
     db: Session,
     *,
-    batch_name: str,
+    batch_name: str | None,
     project_id: int | None = None,
     project_name: str | None = None,
     template_id: int | None = None,
     student_ids: list[int] | None = None,
 ) -> CertificateBatch:
+    batch_no = _next_batch_no(db)
     batch = CertificateBatch(
-        batch_no=_next_batch_no(db),
-        batch_name=batch_name,
+        batch_no=batch_no,
+        batch_name=batch_name or batch_no,
         project_id=project_id,
         project_name=project_name,
         template_id=template_id,
@@ -192,22 +193,44 @@ def _page_batch_records(
 
 @router.post("", response_model=ApiResponse[BatchDetail])
 def create_batch(payload: BatchCreate, db: Session = Depends(get_db)) -> ApiResponse[BatchDetail]:
-    _validate_template_project_binding(
-        db, template_id=payload.template_id, project_id=payload.project_id
-    )
+    project_id = payload.project_id
     project_name = payload.project_name
-    if payload.project_id is not None:
-        project = db.get(Project, payload.project_id)
+    template_name: str | None = None
+    if payload.template_id is not None:
+        template = db.get(CertificateTemplate, payload.template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f"template_id={payload.template_id} not found")
+        if template.status not in {"ACTIVE", "ENABLED"}:
+            raise HTTPException(status_code=409, detail="该证书模板未启用")
+        template_name = template.template_name
+        configured_project_id = template.project_id
+        if configured_project_id is None:
+            configured_project_id = template_service.parse_content_config(template.content).get("project_id")
+        if configured_project_id not in (None, ""):
+            try:
+                configured_project_id = int(configured_project_id)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail="模板绑定的项目配置无效，请先修复模板") from exc
+            if project_id is not None and project_id != configured_project_id:
+                raise HTTPException(status_code=409, detail="批次项目与模板绑定项目不一致")
+            project_id = configured_project_id
+        if project_id is not None:
+            project = db.get(Project, project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail=f"project_id={project_id} not found")
+            project_name = project.project_name
+    elif project_id is not None:
+        project = db.get(Project, project_id)
         if project is None:
-            raise HTTPException(status_code=404, detail=f"project_id={payload.project_id} not found")
+            raise HTTPException(status_code=404, detail=f"project_id={project_id} not found")
         project_name = project.project_name
     batch = create_batch_record(
         db,
-        batch_name=payload.batch_name,
-        project_id=payload.project_id,
+        batch_name=payload.batch_name or (f"{template_name}批次" if template_name else None),
+        project_id=project_id,
         project_name=project_name,
         template_id=payload.template_id,
-        student_ids=payload.student_ids,
+        student_ids=list(dict.fromkeys(payload.student_ids)),
     )
     return ApiResponse.success(_to_batch_detail(db, batch))
 
@@ -313,16 +336,49 @@ def generate_batch(
     if batch is None:
         raise HTTPException(status_code=404, detail=f"批次不存在：batch_id={batch_id}")
 
-    student_ids = payload.student_ids if payload and payload.student_ids else batch.student_ids or []
-    template_id = payload.template_id if payload and payload.template_id is not None else batch.template_id
+    selected_student_ids = (
+        payload.student_ids
+        if payload is not None and payload.student_ids is not None
+        else batch.student_ids or []
+    )
+    student_ids = list(dict.fromkeys(selected_student_ids))
+    requested_template_id = (
+        payload.template_id if payload and payload.template_id is not None else batch.template_id
+    )
+    if (
+        batch.template_id is not None
+        and requested_template_id is not None
+        and requested_template_id != batch.template_id
+    ):
+        raise HTTPException(status_code=409, detail="签发模板与批次绑定模板不一致")
+    template_id = requested_template_id
     template = _load_template_dict(db, template_id)
     issue_date = _parse_issue_date(payload.issue_date if payload else None)
 
-    project_id = payload.project_id if payload and payload.project_id is not None else batch.project_id
-    _validate_template_project_binding(
-        db, template_id=template_id, project_id=project_id
+    requested_project_id = (
+        payload.project_id if payload and payload.project_id is not None else batch.project_id
     )
+    project_id = requested_project_id
     project_name = batch.project_name
+    if template_id is not None:
+        template_record = db.get(CertificateTemplate, template_id)
+        if template_record is not None:
+            configured_project_id = template_record.project_id
+            if configured_project_id is None:
+                configured_project_id = template_service.parse_content_config(
+                    template_record.content
+                ).get("project_id")
+            if configured_project_id not in (None, ""):
+                try:
+                    configured_project_id = int(configured_project_id)
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="模板绑定的项目配置无效，请先修复模板",
+                    ) from exc
+                if requested_project_id is not None and requested_project_id != configured_project_id:
+                    raise HTTPException(status_code=409, detail="签发项目与模板绑定项目不一致")
+                project_id = configured_project_id
     if project_id is not None:
         project = db.get(Project, project_id)
         if project is None:
@@ -337,10 +393,22 @@ def generate_batch(
     batch.student_ids = student_ids
     db.commit()
 
+    existing_student_ids = set()
+    if student_ids:
+        existing_student_ids = {
+            student_id
+            for (student_id,) in db.query(Certificate.student_id).filter(
+                Certificate.batch_id == batch_id,
+                Certificate.student_id.in_(student_ids),
+            ).all()
+        }
+
     failures: list[GenerateFailure] = []
     generated_count = 0
 
     for student_id in student_ids:
+        if student_id in existing_student_ids:
+            continue
         try:
             certificate = certificate_service.generate_certificate(
                 db,

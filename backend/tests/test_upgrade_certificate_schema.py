@@ -60,7 +60,7 @@ def test_upgrade_adds_missing_batch_fields_without_recreating_tables(monkeypatch
     root_columns = {column["name"] for column in inspector.get_columns("credential_roots")}
 
     assert {"project_id", "project_name", "template_id", "student_ids"} <= batch_columns
-    assert {"institution_name", "updated_at"} <= template_columns
+    assert {"project_id", "institution_name", "updated_at"} <= template_columns
     assert {
         "project_name",
         "institution_name",
@@ -204,5 +204,5 @@ def test_upgrade_handles_template_table_without_certificate_table(monkeypatch) -
     template_columns = {
         column["name"] for column in inspector.get_columns("certificate_templates")
     }
-    assert {"institution_name", "updated_at"} <= template_columns
+    assert {"project_id", "institution_name", "updated_at"} <= template_columns
     assert "certificates" not in inspector.get_table_names()

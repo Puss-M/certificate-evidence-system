@@ -11,7 +11,7 @@ async def _request(method: str, path: str, **kwargs) -> httpx.Response:
         return await client.request(method, path, **kwargs)
 
 
-def test_http_exception_uses_api_response_contract() -> None:
+def test_http_exception_uses_api_response_contract(db_session) -> None:
     response = asyncio.run(
         _request(
             "POST",
