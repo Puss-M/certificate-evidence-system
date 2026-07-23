@@ -53,7 +53,7 @@ onMounted(load)
             <el-button link type="primary" :disabled="!s.row.pdf_path" @click="download(s.row)">下载</el-button>
             <el-button v-if="isEvidenced(s.row)" link type="success" @click="viewReceipt(s.row)">查看回执</el-button>
             <el-button v-else link type="success" :loading="evidenceLoading===s.row.certificate_id" @click="evidence(s.row)">存证</el-button>
-            <el-button v-if="s.row.status!=='REVOKED'&&s.row.status!=='REISSUED'" link type="danger" :loading="revokeLoading===s.row.certificate_id" @click="revoke(s.row)">撤销</el-button>
+            <el-button v-if="s.row.status!=='REVOKED'" link type="danger" :loading="revokeLoading===s.row.certificate_id" @click="revoke(s.row)">撤销</el-button>
             <el-button v-if="s.row.status==='REVOKED'" link type="warning" @click="openReissue(s.row)">补发</el-button>
             <el-button v-if="s.row.status==='DRAFT'" link type="danger" @click="remove(s.row)">删除</el-button>
           </template>
@@ -64,7 +64,7 @@ onMounted(load)
 
     <el-drawer v-model="detail" title="证书详情" size="520">
       <div v-if="current" class="detail-list">
-        <div><span>证书编号</span><b>{{current.certificate_no}}</b></div><div><span>学生</span><b>{{current.student_name}}</b></div><div><span>项目</span><b>{{current.project_name}}</b></div><div><span>签发机构</span><b>{{current.institution_name||'—'}}</b></div><div><span>批次ID</span><b>{{current.batch_id}}</b></div><div><span>证书哈希</span><b>{{current.certificate_hash||'—'}}</b></div><div><span>回执编号</span><b>{{current.receipt_id||'—'}}</b></div>
+        <div><span>证书编号</span><b>{{current.certificate_no}}</b></div><div><span>学生</span><b>{{current.student_name}}</b></div><div><span>项目</span><b>{{current.project_name}}</b></div><div><span>签发机构</span><b>{{current.institution_name||'—'}}</b></div><div><span>批次ID</span><b>{{current.batch_id}}</b></div><div class="hash-detail"><span>证书哈希</span><b>{{current.certificate_hash||'—'}}</b></div><div><span>回执编号</span><b>{{current.receipt_id||'—'}}</b></div>
       </div>
       <el-button v-if="current?.pdf_path" type="primary" style="width:100%;margin-top:20px" @click="download(current)">下载证书 PDF</el-button>
     </el-drawer>
@@ -76,3 +76,21 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+<style scoped>
+.hash-detail {
+  align-items: flex-start !important;
+  gap: 24px;
+}
+.hash-detail span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.hash-detail b {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  text-align: right;
+  line-height: 1.5;
+}
+</style>

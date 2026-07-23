@@ -89,3 +89,7 @@ export async function deleteTemplate(id: number) {
   if (useMock) { await wait(); templates.splice(templates.findIndex(x => x.template_id === id), 1); return }
   await request.delete(`/admin/templates/${id}`)
 }
+export async function previewTemplate(id: number): Promise<Blob> {
+  if (useMock) { await wait(); return new Blob() }
+  return await request.get(`/admin/templates/${id}/preview`, { responseType: 'blob' }) as unknown as Blob
+}
