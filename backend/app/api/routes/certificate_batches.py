@@ -107,6 +107,29 @@ def create_batch_record(
     return batch
 
 
+def _validate_template_project_binding(
+    db: Session,
+    *,
+    template_id: int | None,
+    project_id: int | None,
+) -> None:
+    if template_id is None:
+        return
+    template = db.get(CertificateTemplate, template_id)
+    if template is None:
+        # 历史契约允许先建批次；真正签发时由 _load_template_dict 返回 404。
+        return
+    configured_project_id = template_service.parse_content_config(template.content).get("project_id")
+    if configured_project_id in (None, ""):
+        return
+    try:
+        configured_project_id = int(configured_project_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="模板绑定的项目配置无效，请先修复模板") from exc
+    if project_id != configured_project_id:
+        raise HTTPException(status_code=409, detail="批次项目必须与证书模板的绑定项目一致")
+
+
 def _to_batch_detail(db: Session, batch: CertificateBatch) -> BatchDetail:
     # certificates.batch_id 现在是真正的整数外键了（之前是字符串，2号/4号那边的
     # 合并已经把模型改过来了），这里跟着改成用int比较，不再用str()包一层。
@@ -169,6 +192,9 @@ def _page_batch_records(
 
 @router.post("", response_model=ApiResponse[BatchDetail])
 def create_batch(payload: BatchCreate, db: Session = Depends(get_db)) -> ApiResponse[BatchDetail]:
+    _validate_template_project_binding(
+        db, template_id=payload.template_id, project_id=payload.project_id
+    )
     project_name = payload.project_name
     if payload.project_id is not None:
         project = db.get(Project, payload.project_id)
@@ -218,6 +244,11 @@ def update_batch(
     batch = db.get(CertificateBatch, batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail=f"batch_id={batch_id} not found")
+    _validate_template_project_binding(
+        db,
+        template_id=payload.template_id if payload.template_id is not None else batch.template_id,
+        project_id=payload.project_id if payload.project_id is not None else batch.project_id,
+    )
     if payload.batch_name is not None:
         batch.batch_name = payload.batch_name
     if payload.project_id is not None:
@@ -288,6 +319,9 @@ def generate_batch(
     issue_date = _parse_issue_date(payload.issue_date if payload else None)
 
     project_id = payload.project_id if payload and payload.project_id is not None else batch.project_id
+    _validate_template_project_binding(
+        db, template_id=template_id, project_id=project_id
+    )
     project_name = batch.project_name
     if project_id is not None:
         project = db.get(Project, project_id)

@@ -1,5 +1,5 @@
 """
-证书下载接口测试（GET /api/certificates/{certificate_no}/download）。
+证书下载接口测试：公共端不允许下载，管理员和学生各走鉴权接口。
 """
 import asyncio
 from datetime import datetime
@@ -19,13 +19,13 @@ TEMPLATE = {
 }
 
 
-async def _get(path: str) -> httpx.Response:
+async def _get(path: str, headers: dict[str, str] | None = None) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.get(path)
+        return await client.get(path, headers=headers)
 
 
-def test_download_certificate_returns_pdf_bytes(db_session) -> None:
+def test_admin_download_certificate_returns_pdf_bytes(db_session) -> None:
     student = Student(student_no="2023501", student_name="下载测试", class_name="1班")
     db_session.add(student)
     db_session.commit()
@@ -37,7 +37,12 @@ def test_download_certificate_returns_pdf_bytes(db_session) -> None:
         issue_date=datetime(2026, 7, 14),
     )
 
-    response = asyncio.run(_get(f"/api/certificates/{certificate.certificate_no}/download"))
+    response = asyncio.run(
+        _get(
+            f"/api/admin/certificates/{certificate.certificate_no}/download",
+            headers={"Authorization": "Bearer demo-admin-token"},
+        )
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
@@ -46,6 +51,18 @@ def test_download_certificate_returns_pdf_bytes(db_session) -> None:
     assert response.content == expected_path.read_bytes()
 
 
-def test_download_certificate_returns_404_for_unknown_certificate_no(db_session) -> None:
+def test_admin_download_requires_authentication_and_unknown_certificate_is_404(db_session) -> None:
+    unauthenticated = asyncio.run(_get("/api/admin/certificates/CERT-NOT-EXIST/download"))
+    response = asyncio.run(
+        _get(
+            "/api/admin/certificates/CERT-NOT-EXIST/download",
+            headers={"Authorization": "Bearer demo-admin-token"},
+        )
+    )
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 404
+
+
+def test_public_download_route_is_not_available(db_session) -> None:
     response = asyncio.run(_get("/api/certificates/CERT-NOT-EXIST/download"))
     assert response.status_code == 404

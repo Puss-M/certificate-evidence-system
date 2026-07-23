@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -310,6 +311,41 @@ def _template_record(template: CertificateTemplate) -> dict[str, Any]:
     }
 
 
+def _validated_template_config(db: Session, content_config: dict[str, Any]) -> dict[str, Any]:
+    """Keep a template's project reference and display name consistent."""
+    config = dict(content_config)
+    project_id = config.get("project_id")
+    if project_id in (None, ""):
+        return config
+    try:
+        project_id = int(project_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="content_config.project_id must be an integer") from exc
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail=f"project_id={project_id} not found")
+    config["project_id"] = project.project_id
+    config["project_name"] = project.project_name
+    return config
+
+
+def _template_is_bound_to_project(template: CertificateTemplate, project_id: int) -> bool:
+    value = template_service.parse_content_config(template.content).get("project_id")
+    try:
+        return int(value) == project_id
+    except (TypeError, ValueError):
+        return False
+
+
+def _sync_bound_template_project_names(db: Session, project: Project) -> None:
+    for template in db.query(CertificateTemplate).all():
+        config = template_service.parse_content_config(template.content)
+        if _template_is_bound_to_project(template, project.project_id):
+            config["project_id"] = project.project_id
+            config["project_name"] = project.project_name
+            template.content = template_service.serialize_content_config(config)
+
+
 def _batch_record(db: Session, batch: CertificateBatch) -> dict[str, Any]:
     certificates = db.query(Certificate).filter(Certificate.batch_id == batch.batch_id).all()
     evidenced = sum(1 for certificate in certificates if certificate.receipt_id)
@@ -525,6 +561,8 @@ def update_project(project_id: int, payload: ProjectUpdatePayload,
         if field == "status" and value is not None:
             value = value.upper()
         setattr(project, field_map.get(field, field), value)
+    if "name" in values:
+        _sync_bound_template_project_names(db, project)
     db.commit()
     db.refresh(project)
     return ApiResponse.success(_project_record(project))
@@ -538,6 +576,8 @@ def delete_project(project_id: int,
         raise HTTPException(status_code=404, detail="project not found")
     if db.query(CertificateBatch).filter(CertificateBatch.project_id == project_id).count():
         raise HTTPException(status_code=409, detail="该项目已被证书批次使用，不能删除")
+    if any(_template_is_bound_to_project(template, project_id) for template in db.query(CertificateTemplate).all()):
+        raise HTTPException(status_code=409, detail="该项目已被证书模板绑定，不能删除")
     db.delete(project)
     db.commit()
     return ApiResponse.success({"deleted": True})
@@ -654,7 +694,7 @@ def list_templates(current: int = 1, size: int = 10, keyword: str | None = None,
 
 @router.post("/templates")
 def create_template(payload: TemplatePayload, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
-    content_config = payload.content_config or {}
+    content_config = _validated_template_config(db, payload.content_config or {})
     template = CertificateTemplate(
         template_name=payload.template_name or payload.name or "Certificate Template",
         template_code=f"TPL-{int(datetime.utcnow().timestamp())}",
@@ -679,7 +719,9 @@ def update_template(template_id: int, payload: TemplatePayload,
     if payload.institution_name is not None:
         template.institution_name = payload.institution_name
     if payload.content_config is not None:
-        template.content = template_service.serialize_content_config(payload.content_config)
+        template.content = template_service.serialize_content_config(
+            _validated_template_config(db, payload.content_config)
+        )
     if payload.status is not None:
         template.status = payload.status
     db.commit()
@@ -764,6 +806,25 @@ def list_certificates(current: int = 1, size: int = 10, keyword: str | None = No
         DEMO_CERTIFICATES,
     )
     return ApiResponse.success(_page(records, current, size, keyword, status))
+
+
+@router.get("/certificates/{certificate_no}/download")
+def download_certificate(certificate_no: str, db: Session = Depends(get_db)) -> FileResponse:
+    certificate = db.query(Certificate).filter(Certificate.certificate_no == certificate_no).first()
+    if certificate is None:
+        raise HTTPException(status_code=404, detail=f"证书不存在：{certificate_no}")
+    if not certificate.pdf_path:
+        raise HTTPException(status_code=404, detail="该证书记录缺少PDF文件路径")
+
+    project_root = certificate_service.PROJECT_ROOT.resolve()
+    pdf_path = (project_root / certificate.pdf_path).resolve()
+    if project_root not in pdf_path.parents or not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="证书文件不存在，可能已被清理")
+    return FileResponse(
+        path=str(pdf_path),
+        filename=f"{certificate_no}.pdf",
+        media_type="application/pdf",
+    )
 
 
 @router.post("/certificate-batches/{batch_id}/issue")
