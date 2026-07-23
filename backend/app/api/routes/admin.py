@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -729,6 +729,26 @@ def update_template(template_id: int, payload: TemplatePayload,
     return ApiResponse.success(_template_record(template))
 
 
+@router.get("/templates/{template_id}/preview")
+def preview_template(template_id: int, db: Session = Depends(get_db)) -> Response:
+    """
+    "证书模板预览"用——之前前端那个预览抽屉是纯CSS画的假数据效果图，从来没
+    调用过后端，标题/正文/字段勾没勾都是写死的。这里用示例数据（张三同学、
+    示例证书编号）走真实的 certificate_service._generate_pdf() 渲染一份PDF，
+    模板里没勾选的字段这里也不会出现，跟真实生成证书时的规则完全一致，不再
+    是"预览一个样子、生成出来另一个样子"。
+
+    不落库、不占用真实证书编号序列、不写回执链，纯粹只读渲染。
+    """
+    template_row = db.get(CertificateTemplate, template_id)
+    if template_row is None:
+        raise HTTPException(status_code=404, detail="template not found")
+
+    template = template_service.to_generation_template(template_row)
+    pdf_bytes = certificate_service.render_certificate_preview(template)
+    return Response(content=pdf_bytes, media_type="application/pdf")
+
+
 @router.delete("/templates/{template_id}")
 def delete_template(template_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     template = db.get(CertificateTemplate, template_id)
@@ -820,9 +840,23 @@ def download_certificate(certificate_no: str, db: Session = Depends(get_db)) -> 
     pdf_path = (project_root / certificate.pdf_path).resolve()
     if project_root not in pdf_path.parents or not pdf_path.is_file():
         raise HTTPException(status_code=404, detail="证书文件不存在，可能已被清理")
+
+    # 下载时给用户看到的文件名改用模板名称（而不是内部的certificate_no），
+    # 因为模板名称对使用者更有意义（比如"英雄联盟大师毕业证.pdf"）。这只影响
+    # 浏览器保存时建议的文件名，内部存储路径、查找逻辑仍然全部走certificate_no，
+    # 不受影响——同一个模板生成的多张证书下载文件名会相同，浏览器自己会加
+    # (1)(2)后缀区分，这是浏览器的默认行为，不是bug。
+    download_name = f"{certificate_no}.pdf"
+    if certificate.template_id is not None:
+        template = db.get(CertificateTemplate, certificate.template_id)
+        if template is not None and template.template_name:
+            sanitized = template_service.sanitize_download_filename(template.template_name)
+            if sanitized:
+                download_name = f"{sanitized}.pdf"
+
     return FileResponse(
         path=str(pdf_path),
-        filename=f"{certificate_no}.pdf",
+        filename=download_name,
         media_type="application/pdf",
     )
 

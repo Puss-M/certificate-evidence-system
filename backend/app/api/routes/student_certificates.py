@@ -6,8 +6,10 @@ from app.api.routes.auth import require_student
 from app.core.responses import ApiResponse
 from app.db.session import get_db
 from app.models.certificate import Certificate
+from app.models.certificate_template import CertificateTemplate
 from app.models.student import Student
 from app.schemas.certificate import CertificateListItem
+from app.services import template_service
 from app.services.certificate_service import PROJECT_ROOT
 
 
@@ -106,9 +108,19 @@ def download_my_certificate(
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="certificate pdf file not found")
 
+    # 跟管理端下载接口（admin.download_certificate）保持一致：文件名用模板名称，
+    # 内部查找仍然全部走certificate_no。
+    download_name = f"{certificate_no}.pdf"
+    if certificate.template_id is not None:
+        template = db.get(CertificateTemplate, certificate.template_id)
+        if template is not None and template.template_name:
+            sanitized = template_service.sanitize_download_filename(template.template_name)
+            if sanitized:
+                download_name = f"{sanitized}.pdf"
+
     return FileResponse(
         path=str(pdf_path),
-        filename=f"{certificate_no}.pdf",
+        filename=download_name,
         media_type="application/pdf",
     )
 

@@ -9,11 +9,13 @@
 student_ids 和签发日期，并将本次名单固化到批次中。旧调用方仍可在创建批次时
 直接提供学生名单。
 """
+import json
 import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from PIL import Image
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -65,9 +67,15 @@ def _merkle_root_result(root_record: CredentialRoot) -> MerkleRootResult:
 # 在 outputs/接下来要做的事.md 里已经记了一笔，不是这次漏掉了。
 DEFAULT_TEMPLATE = {
     "template_code": "TPL-DEFAULT",
+    "template_name": "",
     "institution_name": "示范学院",
     "project_name": "暑期实训",
+    "course_name": "",
+    "certificate_title": template_service.DEFAULT_CERTIFICATE_TITLE,
+    "content": "",
+    "issue_year": "",
     "grade_level": "合格",
+    "fields": list(template_service.DEFAULT_FIELDS),
 }
 
 
@@ -319,49 +327,60 @@ def _load_template_dict(db: Session, template_id: int | None) -> dict:
     return template_service.to_generation_template(template)
 
 
-@router.post("/{batch_id}/generate", response_model=ApiResponse[GenerateResult])
-def generate_batch(
+def _resolve_generation_context(
+    db: Session,
+    batch: CertificateBatch,
+    *,
     batch_id: int,
-    payload: BatchGeneratePayload | None = None,
-    db: Session = Depends(get_db),
-) -> ApiResponse[GenerateResult]:
+    student_ids: list[int] | None,
+    template_id: int | None,
+    project_id: int | None,
+    issue_date_str: str | None,
+) -> tuple[list[int], dict, datetime]:
     """
-    批量触发证书生成——接口规范.md第4.4节。不需要请求体，处理的对象是创建这个
-    批次时（POST /admin/batches）就存下来的student_ids名单。
-
-    真正的生成逻辑在certificate_service.generate_certificate()里，早就写好并
-    测试过了，这里只做三件事：查批次存不存在、把template_id换成生成函数需要的
-    模板字典、对批次里的每个student_id分别调用生成函数——单个学生失败（比如
-    student_id不存在）不会影响其他人，失败原因收集起来一起返回。
+    /generate 和 /generate-with-signature 共用的准备逻辑：确定这次要生成的学生
+    名单、模板字典（换算project_name覆盖）、签发日期，同时把这次的选择固化回
+    批次记录。抽成公共函数是为了带签章那个接口不用把这一整段复制一遍、两边
+    改一处忘改另一处。
     """
-    batch = db.get(CertificateBatch, batch_id)
-    if batch is None:
-        raise HTTPException(status_code=404, detail=f"批次不存在：batch_id={batch_id}")
+    resolved_student_ids = student_ids if student_ids is not None else batch.student_ids or []
+    resolved_template_id = template_id if template_id is not None else batch.template_id
+    template = _load_template_dict(db, resolved_template_id)
+    issue_date = _parse_issue_date(issue_date_str)
 
-    student_ids = payload.student_ids if payload and payload.student_ids is not None else batch.student_ids or []
-    template_id = payload.template_id if payload and payload.template_id is not None else batch.template_id
-    template = _load_template_dict(db, template_id)
-    issue_date = _parse_issue_date(payload.issue_date if payload else None)
-
-    project_id = payload.project_id if payload and payload.project_id is not None else batch.project_id
+    resolved_project_id = project_id if project_id is not None else batch.project_id
     _validate_template_project_binding(
-        db, template_id=template_id, project_id=project_id
+        db, template_id=resolved_template_id, project_id=resolved_project_id
     )
     project_name = batch.project_name
-    if project_id is not None:
-        project = db.get(Project, project_id)
+    if resolved_project_id is not None:
+        project = db.get(Project, resolved_project_id)
         if project is None:
-            raise HTTPException(status_code=404, detail=f"project_id={project_id} not found")
+            raise HTTPException(status_code=404, detail=f"project_id={resolved_project_id} not found")
         project_name = project.project_name
     if project_name:
         template = {**template, "project_name": project_name}
 
-    batch.project_id = project_id
+    batch.project_id = resolved_project_id
     batch.project_name = project_name
-    batch.template_id = template_id
-    batch.student_ids = student_ids
+    batch.template_id = resolved_template_id
+    batch.student_ids = resolved_student_ids
     db.commit()
 
+    return resolved_student_ids, template, issue_date
+
+
+def _run_generation(
+    db: Session,
+    batch: CertificateBatch,
+    *,
+    batch_id: int,
+    student_ids: list[int],
+    template: dict,
+    issue_date: datetime,
+    audit_detail_suffix: str = "",
+    mentor_signature_image: Image.Image | None = None,
+) -> GenerateResult:
     failures: list[GenerateFailure] = []
     generated_count = 0
 
@@ -373,6 +392,7 @@ def generate_batch(
                 template=template,
                 issue_date=issue_date,
                 batch_id=batch_id,
+                mentor_signature_image=mentor_signature_image,
             )
             # 审计日志埋点：字段风格跟4号在admin.py里写撤销/补发日志时保持一致
             # （action中文短句、target_type固定"证书管理"、target_id用certificate_no、
@@ -384,7 +404,7 @@ def generate_batch(
                     target_type="证书管理",
                     target_id=certificate.certificate_no[:64],
                     operator="admin",
-                    detail=f"批次batch_id={batch_id}生成",
+                    detail=f"批次batch_id={batch_id}生成{audit_detail_suffix}",
                 )
             )
             db.commit()
@@ -397,14 +417,126 @@ def generate_batch(
         batch.status = "GENERATED"
         db.commit()
 
-    return ApiResponse.success(
-        GenerateResult(
-            batch_id=batch_id,
-            generated_count=generated_count,
-            failed_count=len(failures),
-            failures=failures,
-        )
+    return GenerateResult(
+        batch_id=batch_id,
+        generated_count=generated_count,
+        failed_count=len(failures),
+        failures=failures,
     )
+
+
+@router.post("/{batch_id}/generate", response_model=ApiResponse[GenerateResult])
+def generate_batch(
+    batch_id: int,
+    payload: BatchGeneratePayload | None = None,
+    db: Session = Depends(get_db),
+) -> ApiResponse[GenerateResult]:
+    """
+    批量触发证书生成——接口规范.md第4.4节。不需要请求体，处理的对象是创建这个
+    批次时（POST /admin/batches）就存下来的student_ids名单。
+
+    真正的生成逻辑在certificate_service.generate_certificate()里，早就写好并
+    测试过了，这里只做三件事：查批次存不存在、把template_id换算成生成函数需要
+    的模板字典、对批次里的每个student_id分别调用生成函数——单个学生失败（比如
+    student_id不存在）不会影响其他人，失败原因收集起来一起返回。
+
+    如果模板配置了"导师签章"字段、需要贴一张签章图片上去，用下面的
+    /generate-with-signature（multipart/form-data），这个接口不接收文件。
+    """
+    batch = db.get(CertificateBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"批次不存在：batch_id={batch_id}")
+
+    student_ids, template, issue_date = _resolve_generation_context(
+        db, batch,
+        batch_id=batch_id,
+        student_ids=payload.student_ids if payload else None,
+        template_id=payload.template_id if payload else None,
+        project_id=payload.project_id if payload else None,
+        issue_date_str=payload.issue_date if payload else None,
+    )
+
+    result = _run_generation(
+        db, batch,
+        batch_id=batch_id,
+        student_ids=student_ids,
+        template=template,
+        issue_date=issue_date,
+    )
+    return ApiResponse.success(result)
+
+
+@router.post("/{batch_id}/generate-with-signature", response_model=ApiResponse[GenerateResult])
+async def generate_batch_with_signature(
+    batch_id: int,
+    student_ids: str = Form(..., description='JSON数组字符串，如 "[1,2,3]"'),
+    issue_date: str | None = Form(None),
+    template_id: int | None = Form(None),
+    project_id: int | None = Form(None),
+    mentor_signature: UploadFile = File(..., description="导师签章图片，固定4:1长宽比，比例不符自动居中裁剪"),
+    db: Session = Depends(get_db),
+) -> ApiResponse[GenerateResult]:
+    """
+    跟 /generate 是同一套生成逻辑，多接收一张导师签章图片贴到本次生成的每张
+    证书上。FastAPI一个请求不能同时用JSON请求体和文件上传，所以这个接口改用
+    multipart/form-data：student_ids传JSON数组字符串（不是真正的JSON body），
+    其余标量字段都是普通form字段。
+
+    这张签章图片只在这一次批量生成里用，不落库、不跟模板关联——每次生成都
+    要重新上传，模板本身仍然只存"是否需要导师签章"这个开关(fields里的
+    mentor_signature)，不存图片内容。
+
+    只有当前解析出来的模板确实勾选了"导师签章"字段才接受这次上传，否则
+    直接报错，避免前端调错接口、传了图片却根本用不上。
+    """
+    batch = db.get(CertificateBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail=f"批次不存在：batch_id={batch_id}")
+
+    try:
+        parsed_student_ids = json.loads(student_ids)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422, detail='student_ids 必须是JSON数组字符串，例如 "[1,2,3]"'
+        ) from exc
+    if not isinstance(parsed_student_ids, list) or not all(isinstance(x, int) for x in parsed_student_ids):
+        raise HTTPException(status_code=422, detail="student_ids 解析结果必须是整数数组")
+
+    resolved_template_id = template_id if template_id is not None else batch.template_id
+    preview_template = _load_template_dict(db, resolved_template_id)
+    if "mentor_signature" not in (preview_template.get("fields") or []):
+        raise HTTPException(
+            status_code=422,
+            detail="当前证书模板未启用「导师签章」字段，不需要也不接受签章图片，请改用 /generate",
+        )
+
+    signature_bytes = await mentor_signature.read()
+    if not signature_bytes:
+        raise HTTPException(status_code=422, detail="导师签章图片为空")
+    try:
+        signature_image = certificate_service.load_and_crop_signature(signature_bytes)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"导师签章图片解析失败：{exc}") from exc
+
+    student_ids_list, template, issue_dt = _resolve_generation_context(
+        db, batch,
+        batch_id=batch_id,
+        student_ids=parsed_student_ids,
+        template_id=template_id,
+        project_id=project_id,
+        issue_date_str=issue_date,
+    )
+
+    result = _run_generation(
+        db, batch,
+        batch_id=batch_id,
+        student_ids=student_ids_list,
+        template=template,
+        issue_date=issue_dt,
+        audit_detail_suffix="（含导师签章）",
+        mentor_signature_image=signature_image,
+    )
+    return ApiResponse.success(result)
 
 
 @router.post("/{batch_id}/evidence", response_model=ApiResponse[EvidenceBatchResult])
