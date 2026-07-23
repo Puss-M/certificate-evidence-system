@@ -30,11 +30,13 @@
 "<MYSQL_HOME>\bin\mysqld.exe" --defaults-file="<MYSQL_DATA_DIR>\my.ini" --console
 ```
 
-再启动 FastAPI：
+再通过统一入口启动 FastAPI：
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m scripts.start_dev
 ```
+
+该入口会先依次执行幂等的 `scripts.create_tables` 和 `scripts.upgrade_certificate_schema`，确认旧数据库已补齐 `users`、`invitations`、`auth_sessions` 及业务新增字段后，再启动带访问日志的 Uvicorn。这样可避免直接运行裸 `uvicorn` 时，登录接口因认证表缺失返回 `500`。只有已经手动完成建表与升级时才直接运行 Uvicorn。
 
 二维码默认指向前端公共验真页 `http://127.0.0.1:5173/public/verify`。若需要用手机在同一局域网扫码，可仅在本机 `.env`
 设置 `PUBLIC_VERIFY_BASE_URL=http://<局域网IP>:5173/public/verify`，以前端 `--host 0.0.0.0` 方式启动并重启 FastAPI 后
@@ -78,6 +80,9 @@ ENABLE_DEMO_DATA=true
 
 - `projects`
 - `students`
+- `users`
+- `invitations`
+- `auth_sessions`
 - `certificates`
 - `certificate_templates`
 - `certificate_batches`
@@ -137,7 +142,7 @@ ENABLE_DEMO_DATA=true
 当前测试结果：
 
 ```text
-99 passed
+108 passed
 ```
 
 ## 管理端权限
