@@ -7,7 +7,7 @@ export interface ManagedUser { userId: number; username: string; displayName: st
 export interface TeacherInvitation { invitationToken: string; role: 'TEACHER'; expiresAt: string }
 
 function toLoginResult(data: Record<string, unknown>): { token: string; user: UserInfo } {
-  return { token: String(data.token), user: { id: Number(data.userId || 0), username: String(data.username), displayName: String(data.displayName), role: data.role as Role } }
+  return { token: String(data.token), user: { id: Number(data.userId || 0), username: String(data.username), displayName: String(data.displayName), role: data.role as Role, studentId: data.studentId ? Number(data.studentId) : undefined, mustChangePassword: Boolean(data.mustChangePassword) } }
 }
 
 export async function loginApi(username: string, password: string): Promise<{ token: string; user: UserInfo }> {
@@ -23,6 +23,11 @@ export async function loginApi(username: string, password: string): Promise<{ to
 
 export async function logoutApi(): Promise<void> {
   if (!useMock) await request.post('/auth/logout')
+}
+
+export async function changePasswordApi(currentPassword: string, newPassword: string): Promise<void> {
+  if (useMock) return
+  await request.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword })
 }
 
 export async function registerInvitationApi(payload: InvitationRegistration): Promise<{ token: string; user: UserInfo }> {

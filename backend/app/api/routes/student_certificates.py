@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_student
 from app.core.responses import ApiResponse
 from app.db.session import get_db
 from app.models.certificate import Certificate
@@ -53,20 +54,12 @@ def _certificate_item(db: Session, certificate: Certificate) -> CertificateListI
     )
 
 
-def _find_student(db: Session, student_no: str) -> Student:
-    student = db.query(Student).filter(Student.student_no == student_no).one_or_none()
-    if student is None:
-        raise HTTPException(status_code=404, detail="student not found")
-    return student
-
-
-def _find_certificate_for_student(db: Session, certificate_no: str, student_no: str) -> Certificate:
-    student = _find_student(db, student_no)
+def _find_certificate_for_student(db: Session, certificate_no: str, student_id: int) -> Certificate:
     certificate = (
         db.query(Certificate)
         .filter(
             Certificate.certificate_no == certificate_no,
-            Certificate.student_id == student.student_id,
+            Certificate.student_id == student_id,
         )
         .one_or_none()
     )
@@ -77,13 +70,12 @@ def _find_certificate_for_student(db: Session, certificate_no: str, student_no: 
 
 @router.get("", response_model=ApiResponse[list[CertificateListItem]])
 def list_my_certificates(
-    student_no: str = Query(..., description="演示版学生身份标识，后续由登录 token 替代"),
+    current_user: dict = Depends(require_student),
     db: Session = Depends(get_db),
 ) -> ApiResponse[list[CertificateListItem]]:
-    student = _find_student(db, student_no)
     certificates = (
         db.query(Certificate)
-        .filter(Certificate.student_id == student.student_id)
+        .filter(Certificate.student_id == current_user["student_id"])
         .order_by(Certificate.issue_time.desc(), Certificate.certificate_id.desc())
         .all()
     )
@@ -93,20 +85,20 @@ def list_my_certificates(
 @router.get("/{certificate_no}", response_model=ApiResponse[CertificateListItem])
 def get_my_certificate_detail(
     certificate_no: str,
-    student_no: str = Query(..., description="演示版学生身份标识，后续由登录 token 替代"),
+    current_user: dict = Depends(require_student),
     db: Session = Depends(get_db),
 ) -> ApiResponse[CertificateListItem]:
-    certificate = _find_certificate_for_student(db, certificate_no, student_no)
+    certificate = _find_certificate_for_student(db, certificate_no, current_user["student_id"])
     return ApiResponse.success(_certificate_item(db, certificate))
 
 
 @router.get("/{certificate_no}/download")
 def download_my_certificate(
     certificate_no: str,
-    student_no: str = Query(..., description="演示版学生身份标识，后续由登录 token 替代"),
+    current_user: dict = Depends(require_student),
     db: Session = Depends(get_db),
 ) -> FileResponse:
-    certificate = _find_certificate_for_student(db, certificate_no, student_no)
+    certificate = _find_certificate_for_student(db, certificate_no, current_user["student_id"])
     if not certificate.pdf_path:
         raise HTTPException(status_code=404, detail="certificate pdf path is empty")
 
@@ -124,10 +116,10 @@ def download_my_certificate(
 @router.get("/{certificate_no}/qrcode")
 def get_my_certificate_qrcode(
     certificate_no: str,
-    student_no: str = Query(..., description="演示版学生身份标识，后续由登录 token 替代"),
+    current_user: dict = Depends(require_student),
     db: Session = Depends(get_db),
 ) -> FileResponse:
-    certificate = _find_certificate_for_student(db, certificate_no, student_no)
+    certificate = _find_certificate_for_student(db, certificate_no, current_user["student_id"])
     if not certificate.qr_code_path:
         raise HTTPException(status_code=404, detail="certificate qrcode path is empty")
 

@@ -41,11 +41,13 @@ request.interceptors.response.use(
   (error) => {
     const message = errorMessage(error)
     if (error.response?.status === 401) {
+      const storedUser = localStorage.getItem('certificate_admin_user')
+      const isStudent = storedUser?.includes('"role":"STUDENT"')
       localStorage.removeItem('certificate_admin_token')
       localStorage.removeItem('certificate_admin_user')
-      if (router.currentRoute.value.path === '/login') ElMessage.error(message)
+      if (router.currentRoute.value.path === '/login' || router.currentRoute.value.path === '/student/login') ElMessage.error(message)
       else {
-        router.replace('/login')
+        router.replace(isStudent ? '/student/login' : '/login')
         ElMessage.warning('登录已失效，请重新登录')
       }
     } else if (error.response?.status === 403) {

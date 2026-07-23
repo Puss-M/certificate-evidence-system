@@ -13,16 +13,20 @@ Excel 格式要求：第一行是表头，支持中英文两种写法（可以�
 整个导入失败。
 """
 import io
+import secrets
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from openpyxl import load_workbook
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.routes.auth import require_admin_access
+from app.api.routes.auth import PASSWORD_HASH, require_admin_access
 from app.api.routes.certificate_batches import create_batch_record
 from app.core.responses import ApiResponse
 from app.db.session import get_db
+from app.models.audit_log import AuditLog
 from app.models.student import Student
+from app.models.user import AuthSession, User
 from app.schemas.student import ImportFailure, ImportResult
 
 router = APIRouter(prefix="/admin/students", dependencies=[Depends(require_admin_access)])
@@ -36,6 +40,32 @@ _HEADER_ALIASES: dict[str, set[str]] = {
 }
 
 
+class StudentAccountProvisionRequest(BaseModel):
+    student_ids: list[int] = Field(default_factory=list, max_length=500)
+
+
+def _initial_password() -> str:
+    return secrets.token_urlsafe(12)
+
+
+def _revoke_sessions(db: Session, user_id: int) -> None:
+    from datetime import datetime
+
+    db.query(AuthSession).filter(
+        AuthSession.user_id == user_id,
+        AuthSession.revoked_at.is_(None),
+    ).update({AuthSession.revoked_at: datetime.utcnow()}, synchronize_session=False)
+
+
+def _credential_record(student: Student, password: str) -> dict:
+    return {
+        "student_id": student.student_id,
+        "student_no": student.student_no,
+        "student_name": student.student_name,
+        "initial_password": password,
+    }
+
+
 def _map_headers(header_row: tuple) -> dict[str, int]:
     column_index: dict[str, int] = {}
     for idx, cell in enumerate(header_row):
@@ -46,6 +76,95 @@ def _map_headers(header_row: tuple) -> dict[str, int]:
             if cell_text in aliases:
                 column_index[field] = idx
     return column_index
+
+
+@router.post("/accounts/provision")
+def provision_student_accounts(
+    payload: StudentAccountProvisionRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin_access),
+) -> ApiResponse[dict]:
+    query = db.query(Student).order_by(Student.student_id.asc())
+    requested_ids = set(payload.student_ids)
+    if requested_ids:
+        query = query.filter(Student.student_id.in_(requested_ids))
+    students = query.all()
+    found_ids = {student.student_id for student in students}
+    missing_ids = sorted(requested_ids - found_ids)
+
+    existing_by_student_id = {
+        user.student_id: user
+        for user in db.query(User).filter(User.student_id.is_not(None)).all()
+        if user.student_id is not None
+    }
+    usernames = {student.student_no for student in students}
+    occupied_usernames = {
+        user.username for user in db.query(User).filter(User.username.in_(usernames)).all()
+    }
+    created: list[dict] = []
+    skipped: list[dict] = [{"student_id": student_id, "reason": "学生不存在"} for student_id in missing_ids]
+
+    for student in students:
+        if student.student_id in existing_by_student_id:
+            skipped.append({"student_id": student.student_id, "reason": "学生账号已开通"})
+            continue
+        if student.student_no in occupied_usernames:
+            skipped.append({"student_id": student.student_id, "reason": "学号已被其他账号占用"})
+            continue
+        password = _initial_password()
+        db.add(
+            User(
+                username=student.student_no,
+                display_name=student.student_name,
+                password_hash=PASSWORD_HASH.hash(password),
+                role="STUDENT",
+                student_id=student.student_id,
+                must_change_password=True,
+            )
+        )
+        created.append(_credential_record(student, password))
+
+    if created:
+        db.add(
+            AuditLog(
+                action="批量开通学生账号",
+                target_type="学生账号",
+                target_id=None,
+                operator=current_user["username"],
+                detail=f"created={len(created)}, skipped={len(skipped)}",
+            )
+        )
+        db.commit()
+    return ApiResponse.success({"created": created, "skipped": skipped})
+
+
+@router.post("/{student_id}/account/reset-password")
+def reset_student_password(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin_access),
+) -> ApiResponse[dict]:
+    student = db.get(Student, student_id)
+    if student is None:
+        raise HTTPException(status_code=404, detail="学生不存在")
+    user = db.query(User).filter(User.student_id == student_id, User.role == "STUDENT").one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="该学生尚未开通账号")
+    password = _initial_password()
+    user.password_hash = PASSWORD_HASH.hash(password)
+    user.must_change_password = True
+    _revoke_sessions(db, user.user_id)
+    db.add(
+        AuditLog(
+            action="重置学生密码",
+            target_type="学生账号",
+            target_id=str(student_id),
+            operator=current_user["username"],
+            detail="initial_password_regenerated",
+        )
+    )
+    db.commit()
+    return ApiResponse.success(_credential_record(student, password))
 
 
 @router.post("/import", response_model=ApiResponse[ImportResult])

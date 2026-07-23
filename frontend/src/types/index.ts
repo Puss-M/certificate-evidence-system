@@ -1,5 +1,5 @@
-export type Role = 'ADMIN' | 'TEACHER' | 'AUDITOR'
-export interface UserInfo { id: number; username: string; displayName: string; role: Role }
+export type Role = 'ADMIN' | 'TEACHER' | 'AUDITOR' | 'STUDENT'
+export interface UserInfo { id: number; username: string; displayName: string; role: Role; studentId?: number; mustChangePassword?: boolean }
 export interface ApiResponse<T> { code: number; message: string; data: T }
 export interface PageQuery { current: number; size: number; keyword?: string; status?: string; [key: string]: unknown }
 export interface PageResult<T> { records: T[]; total: number; current: number; size: number }

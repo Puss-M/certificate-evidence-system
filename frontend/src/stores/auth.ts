@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { UserInfo } from '@/types'
-import { loginApi, logoutApi, registerInvitationApi, type InvitationRegistration } from '@/api/auth'
+import { changePasswordApi, loginApi, logoutApi, registerInvitationApi, type InvitationRegistration } from '@/api/auth'
 
 const TOKEN_KEY = 'certificate_admin_token'
 const USER_KEY = 'certificate_admin_user'
@@ -11,7 +11,7 @@ function loadStoredUser(): UserInfo | null {
   if (!raw) return null
   try {
     const value = JSON.parse(raw) as Partial<UserInfo>
-    if (!value.username || !value.displayName || !['ADMIN', 'TEACHER', 'AUDITOR'].includes(String(value.role))) {
+    if (!value.username || !value.displayName || !['ADMIN', 'TEACHER', 'AUDITOR', 'STUDENT'].includes(String(value.role))) {
       throw new Error('invalid stored user')
     }
     return value as UserInfo
@@ -39,6 +39,14 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function registerFromInvitation(payload: InvitationRegistration) { persistSession(await registerInvitationApi(payload)) }
 
+  async function changePassword(currentPassword: string, newPassword: string) {
+    await changePasswordApi(currentPassword, newPassword)
+    if (user.value) {
+      user.value = { ...user.value, mustChangePassword: false }
+      localStorage.setItem(USER_KEY, JSON.stringify(user.value))
+    }
+  }
+
   async function logout() {
     try { await logoutApi() } finally {
     token.value = ''
@@ -48,5 +56,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { token, user, isLoggedIn, isAdmin, login, registerFromInvitation, logout }
+  return { token, user, isLoggedIn, isAdmin, login, registerFromInvitation, changePassword, logout }
 })

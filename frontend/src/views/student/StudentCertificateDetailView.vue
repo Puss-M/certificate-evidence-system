@@ -1,26 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import type { Certificate } from '@/types'
-import { buildStudentDownloadUrl, buildStudentQrCodeUrl, getSavedStudentNo, getStudentCertificateDetail } from '@/api/studentCertificates'
+import { downloadStudentCertificate, getStudentCertificateDetail, getStudentQrCode } from '@/api/studentCertificates'
 
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
-const studentNo = ref(String(route.query.student_no || getSavedStudentNo()))
 const certificate = ref<Certificate>()
 const certificateNo = computed(() => String(route.params.certificateNo || ''))
 const verifyLink = computed(() => `${location.origin}/public/verify/${encodeURIComponent(certificateNo.value)}`)
-const downloadUrl = computed(() => buildStudentDownloadUrl(certificateNo.value, studentNo.value))
-const qrcodeUrl = computed(() => buildStudentQrCodeUrl(certificateNo.value, studentNo.value))
+const qrcodeUrl = ref('')
 
 async function load() {
   loading.value = true
   try {
-    certificate.value = await getStudentCertificateDetail(certificateNo.value, studentNo.value)
+    certificate.value = await getStudentCertificateDetail(certificateNo.value)
+    const qrcode = await getStudentQrCode(certificateNo.value)
+    if (qrcode) qrcodeUrl.value = URL.createObjectURL(qrcode)
   } finally {
     loading.value = false
   }
@@ -31,16 +31,23 @@ async function copyVerifyLink() {
   ElMessage.success('验真链接已复制')
 }
 
-function downloadPdf() {
-  window.open(downloadUrl.value, '_blank')
+async function downloadPdf() {
+  const pdf = await downloadStudentCertificate(certificateNo.value)
+  const url = URL.createObjectURL(pdf)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${certificateNo.value}.pdf`
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 onMounted(load)
+onBeforeUnmount(() => { if (qrcodeUrl.value) URL.revokeObjectURL(qrcodeUrl.value) })
 </script>
 
 <template>
   <div class="student-page">
-    <header class="plain-topbar"><b>可信证书学生端</b><div><el-button link @click="router.push({path:'/student/certificates',query:{student_no:studentNo}})">我的证书</el-button><el-button link @click="router.push('/public/verify')">公共验真</el-button></div></header>
+    <header class="plain-topbar"><b>可信证书学生端</b><div><el-button link @click="router.push('/student/certificates')">我的证书</el-button><el-button link @click="router.push('/public/verify')">公共验真</el-button></div></header>
     <main class="plain-main">
       <PageHeader title="证书详情" description="下载 PDF、展示二维码并查看链上/链式存证回执">
         <el-button @click="copyVerifyLink">复制验真链接</el-button>

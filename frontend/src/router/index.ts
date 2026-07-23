@@ -6,17 +6,19 @@ import type { Role } from '@/types'
 const ADMIN_TEACHER: Role[] = ['ADMIN', 'TEACHER']
 
 export function roleHome(role?: Role) {
-  return role === 'TEACHER' ? '/projects' : role === 'AUDITOR' ? '/chain' : '/dashboard'
+  return role === 'STUDENT' ? '/student' : role === 'TEACHER' ? '/projects' : role === 'AUDITOR' ? '/chain' : '/dashboard'
 }
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: '登录' } },
+    { path: '/student/login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: '学生登录' } },
     { path: '/register', component: () => import('@/views/RegisterInvitationView.vue'), meta: { public: true, title: '受邀注册' } },
-    { path: '/student', component: () => import('@/views/student/StudentCenterView.vue'), meta: { public: true, title: '学生中心' } },
-    { path: '/student/certificates', component: () => import('@/views/student/MyCertificatesView.vue'), meta: { public: true, title: '我的证书' } },
-    { path: '/student/certificates/:certificateNo', component: () => import('@/views/student/StudentCertificateDetailView.vue'), meta: { public: true, title: '证书详情' } },
+    { path: '/student/change-password', component: () => import('@/views/student/StudentChangePasswordView.vue'), meta: { title: '修改初始密码', roles: ['STUDENT'] } },
+    { path: '/student', component: () => import('@/views/student/StudentCenterView.vue'), meta: { title: '学生中心', roles: ['STUDENT'] } },
+    { path: '/student/certificates', component: () => import('@/views/student/MyCertificatesView.vue'), meta: { title: '我的证书', roles: ['STUDENT'] } },
+    { path: '/student/certificates/:certificateNo', component: () => import('@/views/student/StudentCertificateDetailView.vue'), meta: { title: '证书详情', roles: ['STUDENT'] } },
     { path: '/public/verify', component: () => import('@/views/public/PublicVerifyView.vue'), meta: { public: true, title: '证书验真' } },
     { path: '/public/verify/:certificateNo', component: () => import('@/views/public/PublicVerifyView.vue'), meta: { public: true, title: '证书验真' } },
     {
@@ -53,10 +55,16 @@ export function canRoleAccessPath(path: string, role?: Role) {
 router.beforeEach(to => {
   const auth = useAuthStore()
   document.title = `${String(to.meta.title || '管理后台')} - 可信证书平台`
-  if (!to.meta.public && !auth.isLoggedIn) return `/login?redirect=${encodeURIComponent(to.fullPath)}`
-  if (to.path === '/login' && auth.isLoggedIn) return roleHome(auth.user?.role)
+  if (!to.meta.public && !auth.isLoggedIn) {
+    const loginPath = to.path.startsWith('/student') ? '/student/login' : '/login'
+    return `${loginPath}?redirect=${encodeURIComponent(to.fullPath)}`
+  }
+  if ((to.path === '/login' || to.path === '/student/login') && auth.isLoggedIn) {
+    return auth.user?.mustChangePassword ? '/student/change-password' : roleHome(auth.user?.role)
+  }
   const roles = to.meta.roles as Role[] | undefined
   if (roles && (!auth.user || !roles.includes(auth.user.role))) return '/403'
+  if (auth.user?.role === 'STUDENT' && auth.user.mustChangePassword && to.path !== '/student/change-password') return '/student/change-password'
 })
 
 export default router

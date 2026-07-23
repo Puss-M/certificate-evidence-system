@@ -98,6 +98,15 @@ def main() -> None:
     _create_project_table_if_missing()
     _create_auth_tables_if_missing()
 
+    if _column_names("users"):
+        _add_column_if_missing("users", "student_id", "student_id INT NULL")
+        _add_column_if_missing(
+            "users",
+            "must_change_password",
+            "must_change_password TINYINT(1) NOT NULL DEFAULT 0",
+        )
+        _create_unique_index_if_missing("users", "uq_users_student_id", ("student_id",))
+
     if _column_names("certificates"):
         _add_column_if_missing(
             "certificates",

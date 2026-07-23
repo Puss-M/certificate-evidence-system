@@ -53,6 +53,11 @@ class InvitationRegistrationRequest(BaseModel):
         return display_name
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
 def _auth_secret() -> str:
     if not settings.jwt_secret:
         raise HTTPException(status_code=500, detail="服务器认证配置缺失")
@@ -81,6 +86,8 @@ def _serialize_user(user: User | dict) -> dict:
         "username": user.username,
         "display_name": user.display_name,
         "role": user.role,
+        "student_id": user.student_id,
+        "must_change_password": user.must_change_password,
         "is_active": user.is_active,
     }
 
@@ -152,6 +159,14 @@ def require_roles(*allowed_roles: str):
     return dependency
 
 
+def require_student(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user["role"] != "STUDENT" or not current_user.get("student_id"):
+        raise HTTPException(status_code=403, detail="学生账号无权访问此资源")
+    if current_user.get("must_change_password"):
+        raise HTTPException(status_code=403, detail="请先修改初始密码")
+    return current_user
+
+
 def require_admin_access(
     request: Request,
     current_user: dict = Depends(get_current_user),
@@ -204,6 +219,23 @@ def logout(
 @router.get("/me")
 def me(current_user: dict = Depends(get_current_user)) -> ApiResponse[dict]:
     return ApiResponse.success({key: value for key, value in current_user.items() if key not in {"jti", "demo"}})
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApiResponse[dict]:
+    user = db.get(User, current_user["user_id"])
+    if user is None or not PASSWORD_HASH.verify(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="当前密码错误")
+    if payload.current_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+    user.password_hash = PASSWORD_HASH.hash(payload.new_password)
+    user.must_change_password = False
+    db.commit()
+    return ApiResponse.success({"password_changed": True})
 
 
 @router.post("/register/invitation")
