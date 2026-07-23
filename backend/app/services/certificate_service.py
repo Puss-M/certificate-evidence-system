@@ -251,6 +251,7 @@ def generate_certificate(
             batch_id=_normalise_int_id(batch_id),
             template_id=_normalise_template_id(template),
             project_name=template.get("project_name") or "软件开发实训",
+            institution_name=template.get("institution_name"),
             issue_time=issue_date,
             pdf_path=os.path.relpath(final_pdf_path, start=PROJECT_ROOT),
             certificate_hash=certificate_hash,

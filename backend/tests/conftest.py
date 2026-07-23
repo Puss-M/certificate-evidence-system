@@ -14,6 +14,12 @@ import app.models  # noqa: F401  确保所有模型都注册到 Base，建表时
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app as fastapi_app
+from app.core.config import settings
+from app.api.routes.auth import get_auth_db
+
+
+settings.jwt_secret = "test-only-jwt-secret-with-at-least-32-bytes"
+settings.enable_demo_auth = True
 
 
 @pytest.fixture()
@@ -41,8 +47,10 @@ def db_session():
         yield session
 
     fastapi_app.dependency_overrides[get_db] = override_get_db
+    fastapi_app.dependency_overrides[get_auth_db] = override_get_db
     try:
         yield session
     finally:
         session.close()
         fastapi_app.dependency_overrides.pop(get_db, None)
+        fastapi_app.dependency_overrides.pop(get_auth_db, None)

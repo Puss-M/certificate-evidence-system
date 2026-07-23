@@ -10,6 +10,7 @@ class CertificateListItem(BaseModel):
     batch_id: int | str | None = None
     template_id: int | str | None = None
     project_name: str | None = None
+    institution_name: str | None = None
     issue_date: str | None = None
     issue_time: str | None = None
     pdf_path: str | None = None

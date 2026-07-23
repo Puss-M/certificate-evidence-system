@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { UserInfo } from '@/types'
-import { loginApi } from '@/api/auth'
+import { loginApi, logoutApi, registerInvitationApi, type InvitationRegistration } from '@/api/auth'
 
 const TOKEN_KEY = 'certificate_admin_token'
 const USER_KEY = 'certificate_admin_user'
@@ -28,20 +28,25 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => Boolean(token.value && user.value))
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
 
-  async function login(username: string, password: string) {
-    const result = await loginApi(username, password)
+  function persistSession(result: { token: string; user: UserInfo }) {
     token.value = result.token
     user.value = result.user
     localStorage.setItem(TOKEN_KEY, token.value)
     localStorage.setItem(USER_KEY, JSON.stringify(user.value))
   }
 
-  function logout() {
+  async function login(username: string, password: string) { persistSession(await loginApi(username, password)) }
+
+  async function registerFromInvitation(payload: InvitationRegistration) { persistSession(await registerInvitationApi(payload)) }
+
+  async function logout() {
+    try { await logoutApi() } finally {
     token.value = ''
     user.value = null
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
+    }
   }
 
-  return { token, user, isLoggedIn, isAdmin, login, logout }
+  return { token, user, isLoggedIn, isAdmin, login, registerFromInvitation, logout }
 })

@@ -26,14 +26,38 @@ def _build_excel(rows: list[tuple], header: tuple = ("学号", "姓名", "学院
     return buffer.getvalue()
 
 
-async def _post_import(content: bytes, batch_name: str = "测试批次", template_id: int = 1) -> httpx.Response:
+async def _post_import(
+    content: bytes,
+    batch_name: str = "测试批次",
+    template_id: int = 1,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
+    if headers is None:
+        headers = {"Authorization": "Bearer demo-admin-token"}
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         return await client.post(
             "/api/admin/students/import",
             data={"batch_name": batch_name, "template_id": str(template_id)},
             files={"file": ("students.xlsx", content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            headers=headers,
         )
+
+
+def test_import_students_requires_write_role(db_session) -> None:
+    content = _build_excel([("2023001", "权限测试", "", "", "")])
+
+    unauthenticated = asyncio.run(_post_import(content, headers={}))
+    auditor = asyncio.run(
+        _post_import(
+            content,
+            headers={"Authorization": "Bearer demo-auditor-token"},
+        )
+    )
+
+    assert unauthenticated.status_code == 401
+    assert auditor.status_code == 403
+    assert db_session.query(Student).filter_by(student_no="2023001").one_or_none() is None
 
 
 def test_import_students_success(db_session) -> None:

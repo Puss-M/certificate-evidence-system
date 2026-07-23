@@ -21,6 +21,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.models.certificate import Certificate
+from app.models.certificate_template import CertificateTemplate
 from app.models.evidence_receipt import EvidenceReceipt
 from app.models.revocation_record import RevocationRecord
 from app.schemas.verification import VerificationResult
@@ -108,10 +109,18 @@ def _revocation_details(db: Session, certificate: Certificate) -> tuple[str | No
     return record.reason, record.revoked_at.isoformat()
 
 
-def _common_certificate_fields(certificate: Certificate) -> dict[str, object]:
+def _common_certificate_fields(db: Session, certificate: Certificate) -> dict[str, object]:
+    template = (
+        db.get(CertificateTemplate, certificate.template_id)
+        if certificate.template_id is not None
+        else None
+    )
     return {
         "student_name": certificate.student_name,
         "project_name": certificate.project_name,
+        "institution_name": certificate.institution_name or (
+            template.institution_name if template else None
+        ),
         "certificate_hash": certificate.certificate_hash,
         "stored_hash": certificate.certificate_hash,
         "receipt_id": certificate.receipt_id,
@@ -152,7 +161,7 @@ def verify_by_certificate_no(db: Session, certificate_no: str) -> VerificationRe
                 hash_match=hash_match,
                 revocation_reason=revocation_reason,
                 revoked_at=revoked_at,
-                **_common_certificate_fields(certificate),
+                **_common_certificate_fields(db, certificate),
             )
 
         if not receipt_exists or not certificate.certificate_hash:
@@ -161,7 +170,7 @@ def verify_by_certificate_no(db: Session, certificate_no: str) -> VerificationRe
                 certificate_no=certificate_no,
                 message="证书存在，但未完成存证或回执不存在。",
                 hash_match=hash_match,
-                **_common_certificate_fields(certificate),
+                **_common_certificate_fields(db, certificate),
             )
 
         result = "PASS" if hash_match else "HASH_MISMATCH"
@@ -175,7 +184,7 @@ def verify_by_certificate_no(db: Session, certificate_no: str) -> VerificationRe
             ),
             receipt_exists=True,
             hash_match=hash_match,
-            **_common_certificate_fields(certificate),
+            **_common_certificate_fields(db, certificate),
         )
     except Exception:
         logger.exception("certificate number verification failed")
@@ -210,7 +219,7 @@ def verify_by_file(db: Session, certificate_no: str, file_bytes: bytes) -> Verif
                 receipt_exists=receipt_exists,
                 revocation_reason=revocation_reason,
                 revoked_at=revoked_at,
-                **_common_certificate_fields(certificate),
+                **_common_certificate_fields(db, certificate),
             )
 
         if not receipt_exists or not certificate.certificate_hash:
@@ -218,7 +227,7 @@ def verify_by_file(db: Session, certificate_no: str, file_bytes: bytes) -> Verif
                 result="NO_RECEIPT",
                 certificate_no=certificate_no,
                 message="证书存在，但未完成存证或回执不存在。",
-                **_common_certificate_fields(certificate),
+                **_common_certificate_fields(db, certificate),
             )
 
         uploaded_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -239,7 +248,7 @@ def verify_by_file(db: Session, certificate_no: str, file_bytes: bytes) -> Verif
             receipt_exists=True,
             hash_match=hash_match,
             uploaded_hash=uploaded_hash,
-            **_common_certificate_fields(certificate),
+            **_common_certificate_fields(db, certificate),
         )
     except Exception:
         logger.exception("certificate file verification failed")

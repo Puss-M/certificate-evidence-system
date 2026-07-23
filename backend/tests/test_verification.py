@@ -77,6 +77,7 @@ def test_verify_by_certificate_no_returns_pass(db_session) -> None:
     assert data["data"]["hash_match"] is True
     assert data["data"]["certificate_hash"] == certificate.certificate_hash
     assert data["data"]["stored_hash"] == certificate.certificate_hash
+    assert data["data"]["institution_name"] == TEMPLATE["institution_name"]
     assert data["data"]["verify_message"] == data["data"]["message"]
 
 

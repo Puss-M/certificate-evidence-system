@@ -34,6 +34,7 @@ class Certificate(Base):
     )
     credential_type: Mapped[str] = mapped_column(String(32), default="CERTIFICATE")
     project_name: Mapped[str] = mapped_column(String(200), default="软件开发实训")
+    institution_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     issue_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pdf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     certificate_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)

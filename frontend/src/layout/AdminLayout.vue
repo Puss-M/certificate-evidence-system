@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessageBox } from 'element-plus'
-import { DataBoard, Folder, User, Tickets, Collection, DocumentChecked, Link, Operation, Fold, Expand } from '@element-plus/icons-vue'
+import { DataBoard, Folder, User, Tickets, Collection, DocumentChecked, Link, Operation, Fold, Expand, Avatar } from '@element-plus/icons-vue'
 import type { Role } from '@/types'
 const collapsed=ref(false),route=useRoute(),router=useRouter(),auth=useAuthStore()
 const title=computed(()=>String(route.meta.title||'管理后台'))
@@ -15,7 +15,8 @@ const allMenus=[
  {path:'/batches',label:'证书批次',icon:Collection,roles:['ADMIN','TEACHER']},
  {path:'/certificates',label:'证书管理',icon:DocumentChecked,roles:['ADMIN','TEACHER']},
  {path:'/chain',label:'存证回执',icon:Link,roles:['ADMIN','TEACHER','AUDITOR']},
- {path:'/audit',label:'操作日志',icon:Operation,roles:['ADMIN','AUDITOR']}
+ {path:'/audit',label:'操作日志',icon:Operation,roles:['ADMIN','TEACHER','AUDITOR']}
+ ,{path:'/accounts',label:'协作账号',icon:Avatar,roles:['ADMIN']}
 ] as Array<{path:string;label:string;icon:unknown;roles:Role[]}>
 const menus=computed(()=>allMenus.filter(item=>auth.user&&item.roles.includes(auth.user.role)))
 async function logout(){await ElMessageBox.confirm('确认退出当前账号吗？','退出登录');auth.logout();router.replace('/login')}

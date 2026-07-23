@@ -1,0 +1,68 @@
+verify.lotusrain.net {
+	encode zstd gzip
+
+	@public_verify {
+		path /public/verify /public/verify/* /api/verification/* /api/public/verify/* /assets/* /favicon.ico
+	}
+
+	# 当管理子域 DNS 尚未就绪时的受限协作入口。所有管理 API 仍由 FastAPI
+	# 强制执行 JWT 与角色鉴权；文档和健康检查不在此白名单内。
+	@team_management {
+		path /login /register /dashboard /projects /students /templates /batches /certificates /chain /audit /accounts /403 /api/auth/* /api/admin/*
+	}
+
+	# 经项目负责人明确批准的临时学生演示入口。学生端仍以 student_no 参数
+	# 查询，不是正式登录；仅可使用模拟数据，不能扩大为其他 API 或诊断路径。
+	@student_demo {
+		path /student /student/* /api/student/certificates /api/student/certificates/*
+	}
+
+	handle @public_verify {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	handle @team_management {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	handle @student_demo {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	handle {
+		respond "Not Found" 404
+	}
+
+	header {
+		-Server
+	}
+}
+
+# 管理后台只在完成账号初始化、全量接口鉴权和 DNS 验收后启用。
+admin.verify.lotusrain.net {
+	encode zstd gzip
+
+	@admin_api {
+		path /api/auth/* /api/admin/*
+	}
+
+	handle @admin_api {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	@other_api {
+		path /api/*
+	}
+
+	handle @other_api {
+		respond "Not Found" 404
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:18080
+	}
+
+	header {
+		-Server
+	}
+}

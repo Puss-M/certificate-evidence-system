@@ -10,19 +10,51 @@ export async function getTemplates(query: PageQuery): Promise<PageResult<Templat
 }
 
 function fromContract(data: Record<string, unknown>): Template {
-  const config = (data.content_config || {}) as Record<string, unknown>
+  const stored = parseStoredConfig(data.content)
+  const contractConfig = (data.content_config || {}) as Record<string, unknown>
+  const config = Object.keys(contractConfig).length ? contractConfig : stored
   return {
     template_id: Number(data.template_id),
-    name: String(data.template_name || ''),
-    issuer: String(data.institution_name || ''),
-    course_name: String(config.course_name || ''),
-    project_name: String(config.project_name || ''),
-    certificate_title: String(config.certificate_title || ''),
-    content: String(config.content || ''),
-    issue_year: String(config.issue_year || ''),
-    fields: Array.isArray(config.fields) ? config.fields.map(String) : [],
-    enabled: data.status !== 'DISABLED',
+    name: String(data.name || data.template_name || ''),
+    issuer: String(data.issuer || data.institution_name || ''),
+    course_name: String(config.course_name || data.course_name || ''),
+    project_name: String(config.project_name || data.project_name || ''),
+    certificate_title: String(config.certificate_title || data.certificate_title || ''),
+    content: String(config.content || (stored.is_config ? '' : data.content) || ''),
+    issue_year: String(config.issue_year || data.issue_year || ''),
+    fields: Array.isArray(config.fields)
+      ? config.fields.map(String)
+      : Array.isArray(data.fields)
+        ? data.fields.map(String)
+        : [],
+    enabled: typeof data.enabled === 'boolean'
+      ? data.enabled
+      : ['ACTIVE', 'ENABLED'].includes(String(data.status || '').toUpperCase()),
     updated_at: String(data.updated_at || '')
+  }
+}
+
+function parseStoredConfig(value: unknown): Record<string, unknown> & { is_config?: boolean } {
+  const raw = String(value || '').trim()
+  if (!raw.startsWith('{') || !raw.includes('content')) return {}
+
+  const readText = (key: string) => {
+    const match = raw.match(new RegExp(`["']${key}["']\\s*:\\s*["']([\\s\\S]*?)["']\\s*(?:,|})`))
+    return match?.[1]?.replace(/\\'/g, "'").replace(/\\"/g, '"') || ''
+  }
+  const fieldsMatch = raw.match(/["']fields["']\s*:\s*\[([\s\S]*?)\]/)
+  const fields = fieldsMatch
+    ? Array.from(fieldsMatch[1].matchAll(/["']([^"']+)["']/g), match => match[1])
+    : []
+
+  return {
+    is_config: true,
+    course_name: readText('course_name'),
+    project_name: readText('project_name'),
+    certificate_title: readText('certificate_title'),
+    content: readText('content'),
+    issue_year: readText('issue_year'),
+    fields
   }
 }
 

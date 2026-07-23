@@ -13,6 +13,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: '登录' } },
+    { path: '/register', component: () => import('@/views/RegisterInvitationView.vue'), meta: { public: true, title: '受邀注册' } },
     { path: '/student', component: () => import('@/views/student/StudentCenterView.vue'), meta: { public: true, title: '学生中心' } },
     { path: '/student/certificates', component: () => import('@/views/student/MyCertificatesView.vue'), meta: { public: true, title: '我的证书' } },
     { path: '/student/certificates/:certificateNo', component: () => import('@/views/student/StudentCertificateDetailView.vue'), meta: { public: true, title: '证书详情' } },
@@ -31,6 +32,7 @@ const router = createRouter({
         { path: 'certificates', component: () => import('@/views/CertificatesView.vue'), meta: { title: '证书管理', roles: ADMIN_TEACHER } },
         { path: 'chain', component: () => import('@/views/ChainView.vue'), meta: { title: '存证回执', roles: ['ADMIN', 'TEACHER', 'AUDITOR'] } },
         { path: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '操作日志', roles: ['ADMIN', 'AUDITOR'], readOnlyRoles: ['AUDITOR'] } },
+        { path: 'accounts', component: () => import('@/views/AccountManagementView.vue'), meta: { title: '协作账号', roles: ['ADMIN'] } },
       ],
     },
     { path: '/403', component: () => import('@/views/ErrorView.vue'), props: { code: '403', text: '无权访问此页面' }, meta: { public: true } },

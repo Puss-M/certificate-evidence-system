@@ -40,6 +40,8 @@
 设置 `PUBLIC_VERIFY_BASE_URL=http://<局域网IP>:5173/public/verify`，以前端 `--host 0.0.0.0` 方式启动并重启 FastAPI 后
 重新生成演示证书；不要把局域网地址或 `.env` 提交到仓库。已经生成的旧二维码不会自动改写，需要重新生成证书后才能进入新验真页面。
 
+跨电脑运行前端时，可在前端未提交的 `.env` 中设置 `VITE_PROXY_TARGET=http://<后端电脑IP>:8000`，并在后端未提交的 `.env` 中把前端来源加入 `CORS_ALLOWED_ORIGINS`。只允许明确的 `http/https` 来源，不使用 `*`，也不在仓库中保存真实 IP。联调结束后恢复 FastAPI 的 `127.0.0.1` 监听。
+
 Swagger 接口文档地址：
 
 ```text
@@ -54,7 +56,9 @@ http://127.0.0.1:8000/docs
 .\.venv\Scripts\python.exe -m scripts.create_tables
 ```
 
-如果本机以前已经创建过旧表，需要补齐业务表新增字段（包括 `students.college`）和 Merkle 表，可执行：
+如果本机以前已经创建过旧表，需要补齐业务表新增字段（包括 `students.college`、
+`projects`、`certificate_batches.project_id`、`certificate_templates.institution_name/updated_at`
+和 `certificates.institution_name`）和 Merkle 表，可执行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.upgrade_certificate_schema
@@ -62,8 +66,17 @@ http://127.0.0.1:8000/docs
 
 该脚本只补缺失列并按需创建 `credential_roots`、`merkle_tree_nodes`，不删除表、不清空数据。若旧 Merkle 表已有重复批次 Root 或重复节点位置，脚本会保留原数据并明确中止，需先人工核对历史记录后重跑，避免静默删除存证事实。
 
+空数据库默认返回空列表，不再自动混入演示学生、证书或回执。只有本机确实需要演示占位数据时，才在未提交的 `.env` 中设置：
+
+```text
+ENABLE_DEMO_DATA=true
+```
+
+正式联调和验收必须保持 `false`。该开关不等同认证开关，管理端仍需携带 Bearer token。
+
 当前表结构草案：
 
+- `projects`
 - `students`
 - `certificates`
 - `certificate_templates`
@@ -88,6 +101,7 @@ http://127.0.0.1:8000/docs
 - `POST /api/verification/{certificate_no}/file`
 - `POST /api/auth/login`
 - `GET /api/admin/dashboard/statistics`
+- `GET/POST/PUT/DELETE /api/admin/projects`
 - `GET /api/admin/students`
 - `GET /api/admin/templates`
 - `GET/POST/PUT/DELETE /api/admin/batches`
@@ -123,8 +137,31 @@ http://127.0.0.1:8000/docs
 当前测试结果：
 
 ```text
-64 passed
+99 passed
 ```
+
+## 管理端权限
+
+当前阶段使用本地演示 token 验证后端权限边界，不在最终联调阶段扩展正式 JWT。权限由后端校验，不能只依赖前端隐藏按钮。
+
+| 请求 | ADMIN | TEACHER | AUDITOR | 未登录 |
+| --- | --- | --- | --- | --- |
+| 管理端查询（GET） | 允许 | 允许 | 允许 | `401` |
+| 管理端写入（POST/PUT/DELETE） | 允许 | 允许 | `403` | `401` |
+
+证书重复撤销、重复补发、状态不允许的补发，以及删除已关联业务数据等操作返回 `409`，响应继续使用统一的 `code/message/data` 结构。
+
+## 模板接口契约
+
+模板接口以管理员前端使用的字段为主：
+
+- `template_name`
+- `institution_name`
+- `content_config`
+- `status`
+- `updated_at`
+
+`content_config` 保存课程、项目、证书标题、正文、年度和动态字段。批次签发与证书补发从同一模板记录读取签发机构和项目配置，不再固定使用“示范学院”。返回中暂时保留 `name/issuer` 等旧别名，仅用于兼容尚未更新的调用方。
 
 ## 前后端关键字段
 
@@ -151,4 +188,4 @@ http://127.0.0.1:8000/docs
 
 只能提交 `.env.example`。当前 mock 数据使用测试学生和测试证书编号，不包含真实个人信息。
 
-`admin / 123456` 仅用于本地演示登录和前端路由联调，不是生产账号方案。正式账号系统需要接入 `users` 表、密码哈希和 JWT 鉴权。
+生产环境默认关闭演示账号。部署后使用 `python -m scripts.create_admin` 交互式初始化首个管理员；受邀教师通过一次性邀请链接注册。密码仅保存 Argon2 哈希，登录令牌会在登出或账号禁用后失效。

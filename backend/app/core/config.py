@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,7 +10,33 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     database_url: str | None = None
     jwt_secret: str | None = None
+    auth_access_token_minutes: int = 120
+    enable_demo_auth: bool = False
     public_verify_base_url: str = "http://127.0.0.1:5173/public/verify"
+    enable_demo_data: bool = False
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        origins: list[str] = []
+        for raw_origin in self.cors_allowed_origins.split(","):
+            origin = raw_origin.strip().rstrip("/")
+            if not origin:
+                continue
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or "*" in parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(f"invalid CORS origin: {origin}")
+            origins.append(origin)
+        return origins
 
     # 测试链接入相关配置（P2加分项，只上链Merkle Root，见chain_service.py）。
     # 三个都不是必填——没配置的话chain_service会直接跳过上链、不报错，

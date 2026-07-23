@@ -5,8 +5,10 @@ from app.models.certificate_template import CertificateTemplate
 from app.models.credential_root import CredentialRoot
 from app.models.evidence_receipt import EvidenceReceipt
 from app.models.merkle_tree_node import MerkleTreeNode
+from app.models.project import Project
 from app.models.revocation_record import RevocationRecord
 from app.models.student import Student
+from app.models.user import AuthSession, Invitation, User
 
 
 __all__ = [
@@ -17,6 +19,10 @@ __all__ = [
     "CredentialRoot",
     "EvidenceReceipt",
     "MerkleTreeNode",
+    "Project",
     "RevocationRecord",
     "Student",
+    "AuthSession",
+    "Invitation",
+    "User",
 ]

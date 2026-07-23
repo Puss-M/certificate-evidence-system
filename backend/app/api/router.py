@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     admin,
+    admin_accounts,
     admin_students,
     auth,
     certificate_batches,
@@ -24,3 +25,4 @@ api_router.include_router(verification.public_router, tags=["public-verification
 api_router.include_router(admin_students.router, tags=["admin-students"])
 api_router.include_router(certificate_batches.router, tags=["admin-certificate-batches"])
 api_router.include_router(admin.router, tags=["admin"])
+api_router.include_router(admin_accounts.router, tags=["admin-accounts"])

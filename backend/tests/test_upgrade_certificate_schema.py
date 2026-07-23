@@ -21,6 +21,13 @@ def test_upgrade_adds_missing_batch_fields_without_recreating_tables(monkeypatch
             text("CREATE TABLE revocation_records (certificate_id INTEGER, reason VARCHAR(255))")
         )
         connection.execute(
+            text(
+                "CREATE TABLE certificate_templates "
+                "(template_id INTEGER, template_name VARCHAR(128), template_code VARCHAR(64), "
+                "content TEXT, status VARCHAR(32), created_at DATETIME)"
+            )
+        )
+        connection.execute(
             text("CREATE TABLE students (student_id INTEGER, student_no VARCHAR(64), student_name VARCHAR(64))")
         )
         connection.execute(
@@ -46,17 +53,25 @@ def test_upgrade_adds_missing_batch_fields_without_recreating_tables(monkeypatch
 
     inspector = inspect(engine)
     batch_columns = {column["name"] for column in inspector.get_columns("certificate_batches")}
+    template_columns = {column["name"] for column in inspector.get_columns("certificate_templates")}
     certificate_columns = {column["name"] for column in inspector.get_columns("certificates")}
     revocation_columns = {column["name"] for column in inspector.get_columns("revocation_records")}
     student_columns = {column["name"] for column in inspector.get_columns("students")}
     root_columns = {column["name"] for column in inspector.get_columns("credential_roots")}
 
-    assert {"project_name", "template_id", "student_ids"} <= batch_columns
-    assert {"project_name", "issue_time", "previous_certificate_no", "updated_at"} <= certificate_columns
+    assert {"project_id", "project_name", "template_id", "student_ids"} <= batch_columns
+    assert {"institution_name", "updated_at"} <= template_columns
+    assert {
+        "project_name",
+        "institution_name",
+        "issue_time",
+        "previous_certificate_no",
+        "updated_at",
+    } <= certificate_columns
     assert {"action_type", "new_certificate_no"} <= revocation_columns
     assert "college" in student_columns
     assert {"leaf_order_rule", "tx_hash"} <= root_columns
-    assert {"credential_roots", "merkle_tree_nodes"} <= set(inspector.get_table_names())
+    assert {"projects", "credential_roots", "merkle_tree_nodes"} <= set(inspector.get_table_names())
 
     root_unique_columns = upgrader._unique_column_sets("credential_roots")
     node_unique_columns = upgrader._unique_column_sets("merkle_tree_nodes")
@@ -128,3 +143,26 @@ def test_upgrade_adds_college_when_only_students_table_exists(monkeypatch) -> No
     student_columns = {column["name"] for column in inspector.get_columns("students")}
     assert "college" in student_columns
     assert "credential_roots" not in inspector.get_table_names()
+    assert "projects" in inspector.get_table_names()
+
+
+def test_upgrade_handles_template_table_without_certificate_table(monkeypatch) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE certificate_templates "
+                "(template_id INTEGER, template_name VARCHAR(128), template_code VARCHAR(64), "
+                "content TEXT, status VARCHAR(32), created_at DATETIME)"
+            )
+        )
+
+    monkeypatch.setattr(upgrader, "engine", engine)
+    upgrader.main()
+
+    inspector = inspect(engine)
+    template_columns = {
+        column["name"] for column in inspector.get_columns("certificate_templates")
+    }
+    assert {"institution_name", "updated_at"} <= template_columns
+    assert "certificates" not in inspector.get_table_names()

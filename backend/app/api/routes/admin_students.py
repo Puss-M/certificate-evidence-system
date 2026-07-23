@@ -18,13 +18,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_admin_access
 from app.api.routes.certificate_batches import create_batch_record
 from app.core.responses import ApiResponse
 from app.db.session import get_db
 from app.models.student import Student
 from app.schemas.student import ImportFailure, ImportResult
 
-router = APIRouter(prefix="/admin/students")
+router = APIRouter(prefix="/admin/students", dependencies=[Depends(require_admin_access)])
 
 _HEADER_ALIASES: dict[str, set[str]] = {
     "student_no": {"student_no", "学号"},

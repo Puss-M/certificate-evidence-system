@@ -57,7 +57,28 @@ export async function verifyByPdf(certificateNo: string, file: File): Promise<Ve
     const row = certificates.find(item => item.certificate_no === certificateNo)
     if (!row) return buildResult({ certificate_no: certificateNo, result: 'NOT_FOUND' })
     const isTampered = file.name.toLowerCase().includes('tamper') || file.name.includes('篡改')
-    return buildResult({ certificate_no: certificateNo, result: isTampered ? 'HASH_MISMATCH' : row.status === 'REVOKED' ? 'REVOKED' : 'PASS', status: row.status, student_name: row.student_name, project_name: row.project_name, certificate_hash: row.certificate_hash, stored_hash: row.certificate_hash, uploaded_hash: isTampered ? '0'.repeat(64) : row.certificate_hash, receipt_id: row.receipt_id, receipt_exists: Boolean(row.receipt_id), hash_match: !isTampered && row.status !== 'REVOKED' })
+    const receiptExists = Boolean(row.receipt_id)
+    const lifecycleInvalid = ['REVOKED', 'REISSUED', 'EXPIRED'].includes(row.status)
+    const resultCode = lifecycleInvalid
+      ? row.status
+      : !receiptExists
+        ? 'NO_RECEIPT'
+        : isTampered
+          ? 'HASH_MISMATCH'
+          : 'PASS'
+    return buildResult({
+      certificate_no: certificateNo,
+      result: resultCode,
+      status: row.status,
+      student_name: row.student_name,
+      project_name: row.project_name,
+      certificate_hash: row.certificate_hash,
+      stored_hash: row.certificate_hash,
+      uploaded_hash: lifecycleInvalid || !receiptExists ? undefined : isTampered ? '0'.repeat(64) : row.certificate_hash,
+      receipt_id: row.receipt_id,
+      receipt_exists: receiptExists,
+      hash_match: !lifecycleInvalid && receiptExists && !isTampered
+    })
   }
   const form = new FormData()
   form.append('file', file)

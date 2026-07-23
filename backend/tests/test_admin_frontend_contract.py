@@ -7,6 +7,7 @@ from app.main import app
 from app.models.certificate import Certificate, CertificateStatus
 from app.models.certificate_batch import CertificateBatch
 from app.models.certificate_template import CertificateTemplate
+from app.models.revocation_record import RevocationRecord
 from app.models.student import Student
 from app.services import certificate_service
 
@@ -42,6 +43,58 @@ def test_admin_login_matches_frontend_contract() -> None:
     assert data["code"] == 0
     assert data["data"]["token"]
     assert data["data"]["role"] == "ADMIN"
+
+
+def test_admin_role_matrix_protects_reads_and_writes(db_session) -> None:
+    unauthenticated_read = asyncio.run(
+        request_response("GET", "/api/admin/students", headers={})
+    )
+    auditor_read = asyncio.run(
+        request_response(
+            "GET",
+            "/api/admin/students",
+            headers={"Authorization": "Bearer demo-auditor-token"},
+        )
+    )
+    unauthenticated_write = asyncio.run(
+        request_response(
+            "POST",
+            "/api/admin/students",
+            headers={},
+            json={"student_no": "S-AUTH-001", "student_name": "Unauthorized"},
+        )
+    )
+    auditor_write = asyncio.run(
+        request_response(
+            "POST",
+            "/api/admin/students",
+            headers={"Authorization": "Bearer demo-auditor-token"},
+            json={"student_no": "S-AUTH-002", "student_name": "Auditor"},
+        )
+    )
+    teacher_write = asyncio.run(
+        request_response(
+            "POST",
+            "/api/admin/students",
+            headers={"Authorization": "Bearer demo-teacher-token"},
+            json={"student_no": "S-AUTH-003", "student_name": "Teacher"},
+        )
+    )
+
+    assert unauthenticated_read.status_code == 401
+    assert auditor_read.status_code == 403
+    assert unauthenticated_write.status_code == 401
+    assert auditor_write.status_code == 403
+    assert teacher_write.status_code == 200
+    auditor_evidence = asyncio.run(
+        request_response(
+            "GET",
+            "/api/admin/evidence/integrity",
+            headers={"Authorization": "Bearer demo-auditor-token"},
+        )
+    )
+    assert auditor_evidence.status_code == 200
+    assert db_session.query(Student).filter(Student.student_no.like("S-AUTH-%")).count() == 1
 
 
 def test_admin_students_returns_page_result(db_session) -> None:
@@ -110,6 +163,118 @@ def test_admin_student_rejects_overlong_college(db_session) -> None:
     assert response.status_code == 422
     assert response.json()["code"] == 422
     assert db_session.query(Student).filter_by(student_no="S20260006").one_or_none() is None
+
+
+def test_admin_template_persists_configured_issuer_and_content(db_session) -> None:
+    created = asyncio.run(
+        request_json(
+            "POST",
+            "/api/admin/templates",
+            json={
+                "template_name": "自定义证书模板",
+                "institution_name": "计算机学院",
+                "content_config": {
+                    "course_name": "软件开发实训",
+                    "project_name": "证书存证项目",
+                    "certificate_title": "实训证书",
+                    "content": "已完成实训任务。",
+                    "issue_year": "2026",
+                    "fields": ["student_name", "certificate_no", "qr_code"],
+                },
+                "status": "ACTIVE",
+            },
+        )
+    )["data"]
+
+    assert created["issuer"] == "计算机学院"
+    assert created["course_name"] == "软件开发实训"
+    assert created["project_name"] == "证书存证项目"
+    assert created["certificate_title"] == "实训证书"
+
+    listed = asyncio.run(request_json("GET", "/api/admin/templates"))["data"]["records"]
+    assert listed[0]["issuer"] == "计算机学院"
+    template_row = db_session.get(CertificateTemplate, created["template_id"])
+    assert template_row.institution_name == "计算机学院"
+    template_row.updated_at = datetime(2026, 1, 1)
+    db_session.commit()
+
+    updated = asyncio.run(
+        request_json(
+            "PUT",
+            f"/api/admin/templates/{created['template_id']}",
+            json={"institution_name": "信息工程学院"},
+        )
+    )["data"]
+    assert updated["issuer"] == "信息工程学院"
+    assert updated["updated_at"] != "2026-01-01 00:00:00"
+
+
+def test_admin_template_enabled_filter_accepts_frontend_status(db_session) -> None:
+    db_session.add_all(
+        [
+            CertificateTemplate(
+                template_name="Enabled Template",
+                template_code="TPL-STATUS-ACTIVE",
+                institution_name="Test Institution",
+                status="ACTIVE",
+            ),
+            CertificateTemplate(
+                template_name="Disabled Template",
+                template_code="TPL-STATUS-DISABLED",
+                institution_name="Test Institution",
+                status="DISABLED",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    enabled = asyncio.run(
+        request_json("GET", "/api/admin/templates?current=1&size=10&status=ENABLED")
+    )["data"]
+
+    assert enabled["total"] == 1
+    assert enabled["records"][0]["status"] == "ACTIVE"
+
+
+def test_admin_projects_are_persisted_and_validated(db_session) -> None:
+    created = asyncio.run(
+        request_json(
+            "POST",
+            "/api/admin/projects",
+            json={
+                "name": "Certificate Evidence Project",
+                "teacher": "Training Teacher",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-17",
+                "status": "ACTIVE",
+            },
+        )
+    )["data"]
+
+    listed = asyncio.run(request_json("GET", "/api/admin/projects"))["data"]
+    assert listed["total"] == 1
+    assert listed["records"][0]["id"] == created["id"]
+
+    updated = asyncio.run(
+        request_json(
+            "PUT",
+            f"/api/admin/projects/{created['id']}",
+            json={"status": "COMPLETED"},
+        )
+    )["data"]
+    assert updated["status"] == "COMPLETED"
+
+    invalid = asyncio.run(
+        request_response(
+            "PUT",
+            f"/api/admin/projects/{created['id']}",
+            json={"end_date": "2026-06-30"},
+        )
+    )
+    assert invalid.status_code == 422
+
+    unchanged = asyncio.run(request_json("GET", "/api/admin/projects"))["data"]["records"][0]
+    assert unchanged["end_date"] == "2026-07-17"
 
 
 def test_admin_deletes_unissued_student_and_removes_batch_assignment(db_session) -> None:
@@ -333,6 +498,28 @@ def test_admin_frontend_page_endpoints_are_available(db_session) -> None:
         assert "data" in data, path
 
 
+def test_empty_database_does_not_fallback_to_demo_records(db_session) -> None:
+    for path in (
+        "/api/admin/projects",
+        "/api/admin/students",
+        "/api/admin/templates",
+        "/api/admin/certificate-batches",
+        "/api/admin/certificates",
+        "/api/admin/evidence/receipts",
+        "/api/admin/audit-logs",
+    ):
+        page = asyncio.run(request_json("GET", path))["data"]
+        assert page["records"] == [], path
+        assert page["total"] == 0, path
+
+    dashboard = asyncio.run(
+        request_json("GET", "/api/admin/dashboard/statistics")
+    )["data"]
+    assert dashboard["student_count"] == 0
+    assert dashboard["certificateCount"] == 0
+    assert dashboard["evidencedCount"] == 0
+
+
 def test_admin_certificates_and_receipts_use_generated_chain_data(db_session) -> None:
     student = Student(
         student_no="S20260002",
@@ -421,3 +608,17 @@ def test_admin_revoke_accepts_certificate_no_from_frontend(db_session) -> None:
 
     assert data["data"]["certificate_no"] == certificate.certificate_no
     assert data["data"]["status"] == "REVOKED"
+
+    repeated = asyncio.run(
+        request_response(
+            "POST",
+            f"/api/admin/certificates/{certificate.certificate_no}/revoke",
+            json={"reason": "duplicate revoke"},
+        )
+    )
+
+    assert repeated.status_code == 409
+    assert db_session.query(RevocationRecord).filter_by(
+        certificate_id=certificate.certificate_id,
+        action_type="REVOKE",
+    ).count() == 1

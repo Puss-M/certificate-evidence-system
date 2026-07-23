@@ -10,34 +10,70 @@ import asyncio
 
 import httpx
 
+from app.api.routes.certificate_batches import _load_template_dict
 from app.main import app
 from app.models.certificate import Certificate
 from app.models.certificate_template import CertificateTemplate
+from app.models.project import Project
 from app.models.student import Student
 
 
-async def _post_json(path: str, payload: dict | None = None) -> httpx.Response:
+async def _post_json(
+    path: str,
+    payload: dict | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
+    if headers is None:
+        headers = {"Authorization": "Bearer demo-admin-token"}
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.post(path, json=payload)
+        return await client.post(path, json=payload, headers=headers)
 
 
 async def _get_json(path: str) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.get(path)
+        return await client.get(path, headers={"Authorization": "Bearer demo-admin-token"})
 
 
 async def _put_json(path: str, payload: dict | None = None) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.put(path, json=payload)
+        return await client.put(
+            path,
+            json=payload,
+            headers={"Authorization": "Bearer demo-admin-token"},
+        )
 
 
 async def _delete_json(path: str) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        return await client.delete(path)
+        return await client.delete(path, headers={"Authorization": "Bearer demo-admin-token"})
+
+
+def test_batch_routes_require_write_role(db_session) -> None:
+    payload = {"batch_name": "权限测试批次", "student_ids": []}
+
+    unauthenticated = asyncio.run(_post_json("/api/admin/batches", payload, headers={}))
+    auditor = asyncio.run(
+        _post_json(
+            "/api/admin/batches",
+            payload,
+            headers={"Authorization": "Bearer demo-auditor-token"},
+        )
+    )
+    teacher = asyncio.run(
+        _post_json(
+            "/api/admin/batches",
+            payload,
+            headers={"Authorization": "Bearer demo-teacher-token"},
+        )
+    )
+
+    assert unauthenticated.status_code == 401
+    assert auditor.status_code == 403
+    assert teacher.status_code == 200
 
 
 def test_create_batch_stores_student_ids(db_session) -> None:
@@ -177,10 +213,17 @@ def test_generate_batch_accepts_frontend_student_ids_body(db_session) -> None:
     template = CertificateTemplate(
         template_name="frontend selected template",
         template_code="TPL-FRONTEND-SELECTED",
+        institution_name="计算机学院",
+        content='{"project_name":"证书存证项目","grade_level":"优秀"}',
         status="ACTIVE",
     )
     db_session.add_all([student, template])
     db_session.commit()
+
+    generation_template = _load_template_dict(db_session, template.template_id)
+    assert generation_template["institution_name"] == "计算机学院"
+    assert generation_template["project_name"] == "证书存证项目"
+    assert generation_template["grade_level"] == "优秀"
 
     batch_id = asyncio.run(
         _post_json(
@@ -212,6 +255,53 @@ def test_generate_batch_accepts_frontend_student_ids_body(db_session) -> None:
     assert len(evidence_data["receipt_ids"]) == 1
     assert evidence_data["evidenced"] == 1
     assert evidence_data["newly_evidenced"] == 0
+
+
+def test_generate_batch_uses_selected_persisted_project(db_session) -> None:
+    student = Student(student_no="2023499", student_name="Project Student")
+    project = Project(
+        project_name="Selected Project",
+        teacher_name="Project Teacher",
+        status="ACTIVE",
+    )
+    template = CertificateTemplate(
+        template_name="Project Template",
+        template_code="TPL-PROJECT-SELECTED",
+        institution_name="Project Institution",
+        content='{"project_name":"Template Default Project"}',
+        status="ACTIVE",
+    )
+    db_session.add_all([student, project, template])
+    db_session.commit()
+
+    batch_id = asyncio.run(
+        _post_json(
+            "/api/admin/batches",
+            {"batch_name": "Project Batch", "student_ids": []},
+        )
+    ).json()["data"]["batch_id"]
+
+    response = asyncio.run(
+        _post_json(
+            f"/api/admin/batches/{batch_id}/generate",
+            {
+                "project_id": project.project_id,
+                "template_id": template.template_id,
+                "student_ids": [student.student_id],
+                "issue_date": "2026-07-17",
+            },
+        )
+    )
+
+    assert response.status_code == 200
+    certificate = db_session.query(Certificate).one()
+    assert certificate.project_name == "Selected Project"
+    assert certificate.institution_name == "Project Institution"
+
+    batch_list = asyncio.run(_get_json("/api/admin/batches"))
+    batch_data = batch_list.json()["data"]["records"][0]
+    assert batch_data["project_id"] == project.project_id
+    assert batch_data["project_name"] == "Selected Project"
 
 
 def test_generate_batch_reports_failure_for_missing_student_without_blocking_others(db_session) -> None:
