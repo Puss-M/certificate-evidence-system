@@ -18,6 +18,7 @@ function fromContract(data: Record<string, unknown>): Template {
     name: String(data.name || data.template_name || ''),
     issuer: String(data.issuer || data.institution_name || ''),
     course_name: String(config.course_name || data.course_name || ''),
+    project_id: Number(data.project_id || config.project_id || 0) || undefined,
     project_name: String(config.project_name || data.project_name || ''),
     certificate_title: String(config.certificate_title || data.certificate_title || ''),
     content: String(config.content || (stored.is_config ? '' : data.content) || ''),
@@ -61,9 +62,11 @@ function parseStoredConfig(value: unknown): Record<string, unknown> & { is_confi
 function toContract(data: Partial<Template>) {
   return {
     templateName: data.name,
+    projectId: data.project_id,
     institutionName: data.issuer,
     contentConfig: {
       course_name: data.course_name,
+      project_id: data.project_id,
       project_name: data.project_name,
       certificate_title: data.certificate_title,
       content: data.content,
