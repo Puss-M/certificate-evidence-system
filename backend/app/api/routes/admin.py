@@ -959,10 +959,13 @@ def revoke_certificate(certificate_identifier: str, payload: RevokePayload,
     certificate = _get_certificate_by_identifier(db, certificate_identifier)
     if certificate is None:
         raise HTTPException(status_code=404, detail="certificate not found")
-    if certificate.status != CertificateStatus.VALID.value:
+    if certificate.status not in {
+        CertificateStatus.VALID.value,
+        CertificateStatus.REISSUED.value,
+    }:
         raise HTTPException(
             status_code=409,
-            detail=f"仅有效证书可以撤销，当前状态：{certificate.status}",
+            detail=f"仅有效或已补发证书可以撤销，当前状态：{certificate.status}",
         )
     certificate.status = CertificateStatus.REVOKED.value
     db.add(
@@ -1019,7 +1022,7 @@ def reissue_certificate(certificate_id: int, payload: ReissuePayload,
         "qr_code_path": replacement.qr_code_path,
         "verify_url": replacement.verify_url,
         "receipt_id": replacement.receipt_id,
-        "status": CertificateStatus.VALID.value,
+        "status": CertificateStatus.REISSUED.value,
         "root_id": replacement.root_id,
         "previous_certificate_no": None,
     }

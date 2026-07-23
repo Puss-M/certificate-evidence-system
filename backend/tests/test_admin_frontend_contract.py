@@ -442,7 +442,7 @@ def test_admin_legacy_batch_route_rejects_deleting_generated_batch(db_session) -
     assert db_session.get(CertificateBatch, batch.batch_id) is not None
 
 
-def test_admin_reissues_revoked_certificate_in_place_and_allows_revoke_again(db_session) -> None:
+def test_admin_reissue_and_revoke_preserve_id_and_expose_real_status(db_session) -> None:
     student = Student(student_no="S20260010", student_name="Reissue Student")
     db_session.add(student)
     db_session.commit()
@@ -452,41 +452,67 @@ def test_admin_reissues_revoked_certificate_in_place_and_allows_revoke_again(db_
         template=TEMPLATE,
         issue_date=datetime(2026, 7, 14),
     )
-    old_certificate_no = certificate.certificate_no
-    asyncio.run(
-        request_json(
+    certificate_id = certificate.certificate_id
+    original_certificate_no = certificate.certificate_no
+
+    first_revoke = asyncio.run(
+        request_response(
             "POST",
-            f"/api/admin/certificates/{old_certificate_no}/revoke",
+            f"/api/admin/certificates/{original_certificate_no}/revoke",
             json={"reason": "certificate damaged"},
         )
     )
+    assert first_revoke.status_code == 200
+    assert first_revoke.json()["data"]["status"] == CertificateStatus.REVOKED.value
 
-    response = asyncio.run(
+    first_reissue = asyncio.run(
         request_response(
             "POST",
-            f"/api/admin/certificates/{certificate.certificate_id}/reissue",
+            f"/api/admin/certificates/{certificate_id}/reissue",
             json={"reason": "certificate damaged", "issue_date": "2026-07-15"},
         )
     )
 
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["certificate_id"] == certificate.certificate_id
-    assert data["certificate_no"] != old_certificate_no
-    assert data["status"] == CertificateStatus.VALID.value
-    assert "previous_certificate_no" not in data
-    assert "new_certificate_no" not in data
+    assert first_reissue.status_code == 200
+    first_data = first_reissue.json()["data"]
+    assert first_data["certificate_id"] == certificate_id
+    assert first_data["certificate_no"] != original_certificate_no
+    assert first_data["status"] == CertificateStatus.REISSUED.value
+    assert "previous_certificate_no" not in first_data
+    assert "new_certificate_no" not in first_data
     assert db_session.query(Certificate).count() == 1
 
-    revoke_again = asyncio.run(
+    listed_after_reissue = asyncio.run(
+        request_json("GET", "/api/admin/certificates?current=1&size=10")
+    )["data"]["records"]
+    assert listed_after_reissue[0]["certificate_id"] == certificate_id
+    assert listed_after_reissue[0]["status"] == CertificateStatus.REISSUED.value
+
+    second_revoke = asyncio.run(
         request_response(
             "POST",
-            f"/api/admin/certificates/{data['certificate_no']}/revoke",
+            f"/api/admin/certificates/{first_data['certificate_no']}/revoke",
             json={"reason": "补发证书再次撤销"},
         )
     )
-    assert revoke_again.status_code == 200
-    assert revoke_again.json()["data"]["status"] == CertificateStatus.REVOKED.value
+    assert second_revoke.status_code == 200
+    revoked_data = second_revoke.json()["data"]
+    assert revoked_data["certificate_id"] == certificate_id
+    assert revoked_data["status"] == CertificateStatus.REVOKED.value
+
+    second_reissue = asyncio.run(
+        request_response(
+            "POST",
+            f"/api/admin/certificates/{certificate_id}/reissue",
+            json={"reason": "撤销后再次补发", "issue_date": "2026-07-16"},
+        )
+    )
+    assert second_reissue.status_code == 200
+    second_data = second_reissue.json()["data"]
+    assert second_data["certificate_id"] == certificate_id
+    assert second_data["certificate_no"] != first_data["certificate_no"]
+    assert second_data["status"] == CertificateStatus.REISSUED.value
+    assert db_session.query(Certificate).count() == 1
 
 def test_admin_rejects_reissuing_certificate_that_is_not_revoked(db_session) -> None:
     student = Student(student_no="S20260011", student_name="Valid Certificate Student")
