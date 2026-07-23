@@ -204,10 +204,10 @@
 
 ### 当前基线
 
-- 集成分支为 `dev`，2026-07-23 核对点为 `origin/dev@e7c7ebe`；`main` 比 `dev` 落后 11 个提交，尚不是当前部署或联调基线。
-- `rsy` 服务器当前 release 为 `20260722-162118-e7c7ebe`。Docker Compose 的 `backend`、`db`、`web` 均健康；Web 仅监听宿主机 `127.0.0.1:18080`，Caddy 负责公网 HTTPS。
+- 集成分支为 `dev`。2026-07-23 的线上功能 release 源码为 `26e9324`，随后 `dev` 的文档记录继续更新；`main` 尚不是当前部署或联调基线。
+- `rsy` 服务器当前 release 为 `20260723-022737-26e9324`。Docker Compose 的 `backend`、`db`、`web` 均健康；Web 仅监听宿主机 `127.0.0.1:18080`，Caddy 负责公网 HTTPS。
 - 公共验真入口为 `https://verify.lotusrain.net/public/verify`，协作登录入口为 `https://verify.lotusrain.net/login`。2026-07-23 已验证 HTTPS、学生端和带模拟学号的证书查询 `200`、未传学号 `422`、未登录管理接口 `401`，以及文档、OpenAPI 和健康接口的公网 `404` 边界；学生页仅为临时演示，不是正式登录。
-- `admin.verify.lotusrain.net` 的服务器端 DNS 尚未就绪，因此当前仅临时使用同域受限入口。Caddy 只放行登录、注册、指定管理页面、`/api/auth/*` 和 `/api/admin/*`；后端仍必须独立执行 JWT 与角色鉴权，不能把 Caddy 白名单视为权限控制。
+- `admin.verify.lotusrain.net` 的服务器端 DNS 尚未就绪，因此当前仅临时使用同域受限入口。Caddy 放行登录、注册、指定管理页面、`/api/auth/*`、`/api/admin/*`，以及本次批准的临时学生页和当前证书查询路径；后端仍必须独立执行 JWT 与角色鉴权，不能把 Caddy 白名单视为权限控制。
 
 ### 账号与权限边界
 
