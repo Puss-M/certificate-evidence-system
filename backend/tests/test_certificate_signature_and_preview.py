@@ -19,7 +19,7 @@ from app.main import app
 from app.models.certificate_template import CertificateTemplate
 from app.models.project import Project
 from app.models.student import Student
-from app.services import template_service
+from app.services import certificate_service, template_service
 
 
 ADMIN_HEADERS = {"Authorization": "Bearer demo-admin-token"}
@@ -123,6 +123,15 @@ def test_generate_with_signature_crops_to_4_to_1_and_embeds(db_session) -> None:
     body = resp.json()["data"]
     assert body["generated_count"] == 1
     assert body["failed_count"] == 0
+
+
+def test_signature_crop_and_pixel_limit(monkeypatch) -> None:
+    cropped = certificate_service.load_and_crop_signature(_make_signature_bytes((600, 200)))
+    assert cropped.size == (600, 150)
+
+    monkeypatch.setattr(certificate_service, "MAX_SIGNATURE_PIXELS", 1)
+    with __import__("pytest").raises(ValueError, match="像素过大"):
+        certificate_service.load_and_crop_signature(_make_signature_bytes((2, 1)))
 
 
 def test_preview_template_renders_real_pdf_and_skips_unselected_fields(db_session) -> None:

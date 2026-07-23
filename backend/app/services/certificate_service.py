@@ -61,6 +61,7 @@ MAX_GENERATE_ATTEMPTS = 5
 # 导师签章图片固定长宽比（宽:高），上传的图片比例不符就居中裁剪成这个比例，
 # 见 load_and_crop_signature()。
 MENTOR_SIGNATURE_RATIO = 4.0
+MAX_SIGNATURE_PIXELS = 20_000_000
 
 # 证书视觉设计的配色（对应 frontend/src/styles/global.css 里 .certificate-border
 # 等类目前的"证书模板预览"效果图——这是目前唯一的设计基准，PDF生成要往这个
@@ -120,6 +121,9 @@ def load_and_crop_signature(file_bytes: bytes, *, target_ratio: float = MENTOR_S
     certificate_batches.generate_batch_with_signature()。
     """
     image = Image.open(io.BytesIO(file_bytes))
+    if image.width * image.height > MAX_SIGNATURE_PIXELS:
+        raise ValueError("签章图片像素过大")
+    image.load()
     image = image.convert("RGBA")
     width, height = image.size
     if width <= 0 or height <= 0:
