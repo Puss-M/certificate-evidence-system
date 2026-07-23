@@ -1,6 +1,7 @@
 import request from '@/utils/request'
 import type { Certificate } from '@/types'
 import { certificates, useMock, wait } from './mock'
+import { makeQrSvgDataUrl } from '@/utils/qr'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '/api'
 
@@ -37,6 +38,10 @@ export function buildStudentDownloadUrl(certificateNo: string, studentNo: string
 }
 
 export function buildStudentQrCodeUrl(certificateNo: string, studentNo: string) {
-  if (useMock) return ''
+  if (useMock) return makeQrSvgDataUrl(`${location.origin}/public/verify/${encodeURIComponent(certificateNo)}`)
   return `${apiBase}/student/certificates/${encodeURIComponent(certificateNo)}/qrcode?student_no=${encodeURIComponent(studentNo)}`
+}
+
+export function isStudentCertificateMockMode() {
+  return useMock
 }

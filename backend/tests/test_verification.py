@@ -14,6 +14,7 @@ from datetime import datetime
 import httpx
 
 from app.main import app
+from app.models.certificate import Certificate
 from app.models.evidence_receipt import EvidenceReceipt
 from app.models.revocation_record import RevocationRecord
 from app.models.student import Student
@@ -182,11 +183,23 @@ def test_verify_returns_revoked_for_both_endpoints(db_session) -> None:
 def test_verify_returns_reissued_for_both_endpoints(db_session) -> None:
     certificate = _seed_certificate(db_session)
     certificate.status = "REISSUED"
+    db_session.add(
+        Certificate(
+            certificate_no="CERT-20260714-9999",
+            student_id=certificate.student_id,
+            student_name=certificate.student_name,
+            project_name=certificate.project_name,
+            previous_certificate_no=certificate.certificate_no,
+            status="VALID",
+            credential_type="CERTIFICATE",
+        )
+    )
     db_session.commit()
 
     by_no = asyncio.run(_get_json(f"/api/verification/{certificate.certificate_no}"))
     assert by_no["data"]["result"] == "REISSUED"
     assert by_no["data"]["verify_message"] == "旧证书已补发，请查看新证书。"
+    assert by_no["data"]["new_certificate_no"] == "CERT-20260714-9999"
 
     pdf_path = certificate_service.PROJECT_ROOT / certificate.pdf_path
     by_file = asyncio.run(

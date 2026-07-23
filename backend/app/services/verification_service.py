@@ -115,6 +115,11 @@ def _common_certificate_fields(db: Session, certificate: Certificate) -> dict[st
         if certificate.template_id is not None
         else None
     )
+    new_certificate = (
+        db.query(Certificate)
+        .filter(Certificate.previous_certificate_no == certificate.certificate_no)
+        .first()
+    )
     return {
         "student_name": certificate.student_name,
         "project_name": certificate.project_name,
@@ -125,6 +130,7 @@ def _common_certificate_fields(db: Session, certificate: Certificate) -> dict[st
         "stored_hash": certificate.certificate_hash,
         "receipt_id": certificate.receipt_id,
         "status": certificate.status,
+        "new_certificate_no": new_certificate.certificate_no if new_certificate else None,
     }
 
 

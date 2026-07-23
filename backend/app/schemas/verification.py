@@ -19,6 +19,7 @@ class VerificationResult(BaseModel):
     uploaded_hash: str | None = None
     revocation_reason: str | None = None
     revoked_at: str | None = None
+    new_certificate_no: str | None = None
 
 
 # Merkle Proof 相关，数据库设计.md第9.3节。direction取值LEFT/RIGHT，含义见

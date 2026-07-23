@@ -33,7 +33,8 @@ function buildResult(partial: Partial<VerificationResult> & Pick<VerificationRes
     hash_match: partial.hash_match ?? false,
     uploaded_hash: partial.uploaded_hash,
     revocation_reason: partial.revocation_reason,
-    revoked_at: partial.revoked_at
+    revoked_at: partial.revoked_at,
+    new_certificate_no: partial.new_certificate_no
   }
 }
 
@@ -44,7 +45,7 @@ export async function verifyByCertificateNo(certificateNo: string): Promise<Veri
     if (!row) return buildResult({ certificate_no: certificateNo, result: 'NOT_FOUND' })
     const receiptExists = Boolean(row.receipt_id && receipts.some(item => item.receipt_id === row.receipt_id))
     if (row.status === 'REVOKED' || row.status === 'REISSUED' || row.status === 'EXPIRED') {
-      return buildResult({ certificate_no: certificateNo, result: row.status, status: row.status, student_name: row.student_name, project_name: row.project_name, certificate_hash: row.certificate_hash, receipt_id: row.receipt_id, receipt_exists: receiptExists, hash_match: receiptExists })
+      return buildResult({ certificate_no: certificateNo, result: row.status, status: row.status, student_name: row.student_name, project_name: row.project_name, certificate_hash: row.certificate_hash, receipt_id: row.receipt_id, receipt_exists: receiptExists, hash_match: receiptExists, new_certificate_no: row.new_certificate_no })
     }
     return buildResult({ certificate_no: certificateNo, result: receiptExists ? 'PASS' : 'NO_RECEIPT', status: row.status, student_name: row.student_name, project_name: row.project_name, certificate_hash: row.certificate_hash, receipt_id: row.receipt_id, receipt_exists: receiptExists, hash_match: receiptExists })
   }
@@ -77,7 +78,8 @@ export async function verifyByPdf(certificateNo: string, file: File): Promise<Ve
       uploaded_hash: lifecycleInvalid || !receiptExists ? undefined : isTampered ? '0'.repeat(64) : row.certificate_hash,
       receipt_id: row.receipt_id,
       receipt_exists: receiptExists,
-      hash_match: !lifecycleInvalid && receiptExists && !isTampered
+      hash_match: !lifecycleInvalid && receiptExists && !isTampered,
+      new_certificate_no: row.new_certificate_no
     })
   }
   const form = new FormData()
