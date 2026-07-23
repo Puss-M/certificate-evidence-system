@@ -17,5 +17,6 @@ export interface ChainRecord { receipt_id: string; certificate_id?: number; cert
 export interface AuditLog { id: number; operator: string; action: string; module: string; target: string; detail?: string; result: string; createdAt: string }
 export interface DashboardStatistics { projectCount: number; student_count: number; certificateCount: number; evidencedCount: number; validCount: number; revokedCount: number; recentReceipts: ChainRecord[]; recentLogs: AuditLog[] }
 export interface IssueRequest { batch_id: number; project_id?: number; template_id?: number; student_ids?: number[]; issue_date?: string }
+export interface IssueWithSignatureRequest extends IssueRequest { project_id: number; template_id: number; student_ids: number[]; issue_date: string; mentor_signature: File }
 export interface IssueResult { success_count: number; failed_count: number; failures: Array<{ student_id?: number; student_name?: string; reason: string }> }
 export interface ImportResult { success_count: number; failed_count: number; failures: Array<{ row: number; reason: string }> }
