@@ -26,6 +26,10 @@ jobs:
         run: |
           python -m pip install --no-deps eth-tester==0.13.0b1 py-evm==0.12.1b1
           python -m pip install -r requirements-dev.txt
+      - name: Lint fatal issues only (E9,F = syntax & undefined names)
+        run: |
+          python -m pip install ruff
+          ruff check . --select E9,F
       - name: Run tests
         run: python -m pytest -q
 
