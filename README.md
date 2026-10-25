@@ -1,5 +1,11 @@
 # 暑期实训：可信证书存证系统
 
+[![CI](https://github.com/Puss-M/certificate-evidence-system/actions/workflows/ci.yml/badge.svg)](https://github.com/Puss-M/certificate-evidence-system/actions/workflows/ci.yml)
+[![Backend Tests](https://img.shields.io/badge/backend-115%20tests%20passing-brightgreen.svg)](backend/tests)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.139-009688.svg?logo=fastapi)](backend/requirements.txt)
+[![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D.svg?logo=vuedotjs)](frontend/package.json)
+
 本仓库用于完成暑期实训创新项目 1：基于区块链的实训证书与学业证明存证系统。当前定位为：
 
 > 证书生命周期管理系统 + 哈希存证验真系统。
