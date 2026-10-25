@@ -11,7 +11,7 @@ student_ids 和签发日期，并将本次名单固化到批次中。旧调用�
 """
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -80,7 +80,7 @@ DEFAULT_TEMPLATE = {
 
 
 def _next_batch_no(db: Session) -> str:
-    date_str = datetime.utcnow().strftime("%Y%m%d")
+    date_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d")
     prefix = f"BATCH-{date_str}-"
 
     max_no = db.query(func.max(CertificateBatch.batch_no)).filter(
@@ -161,7 +161,7 @@ def _to_batch_detail(db: Session, batch: CertificateBatch) -> BatchDetail:
 
 def _parse_issue_date(value: str | None) -> datetime:
     if not value:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         return datetime.strptime(value[:10], "%Y-%m-%d")
     except ValueError as exc:

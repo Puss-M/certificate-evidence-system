@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.timeutil import utcnow
 from app.db.base import Base
 
 
@@ -15,4 +16,4 @@ class RevocationRecord(Base):
     reason: Mapped[str] = mapped_column(String(255))
     operator: Mapped[str | None] = mapped_column(String(64), nullable=True)
     new_certificate_no: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    revoked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

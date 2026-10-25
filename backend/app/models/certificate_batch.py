@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import JSON, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.timeutil import utcnow
 from app.db.base import Base
 
 
@@ -13,7 +14,7 @@ class CertificateBatch(Base):
     batch_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     batch_name: Mapped[str] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(32), default="DRAFT")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     # 下面几个字段是新增的（补齐接口规范.md第4.3/4.4节"创建证书批次"/"批量生成证书"
     # 需要用到的信息，之前这张表只有最基础的4个字段）。都设为可空，不影响已有数据/代码：

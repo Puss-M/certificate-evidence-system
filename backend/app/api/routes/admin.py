@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
@@ -214,7 +214,7 @@ def _format_date(value: datetime | None) -> str:
 
 def _parse_issue_date(value: str | None) -> datetime:
     if not value:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         return datetime.strptime(value[:10], "%Y-%m-%d")
     except ValueError as exc:
@@ -697,7 +697,7 @@ def create_template(payload: TemplatePayload, db: Session = Depends(get_db)) -> 
     content_config = _validated_template_config(db, payload.content_config or {})
     template = CertificateTemplate(
         template_name=payload.template_name or payload.name or "Certificate Template",
-        template_code=f"TPL-{int(datetime.utcnow().timestamp())}",
+        template_code=f"TPL-{int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())}",
         institution_name=payload.institution_name or template_service.DEFAULT_INSTITUTION_NAME,
         content=template_service.serialize_content_config(content_config),
         status=payload.status or "ACTIVE",
@@ -777,7 +777,7 @@ def list_batches(current: int = 1, size: int = 10, keyword: str | None = None,
 @router.post("/certificate-batches")
 def create_batch(payload: BatchPayload, db: Session = Depends(get_db)) -> ApiResponse[dict[str, Any]]:
     batch = CertificateBatch(
-        batch_no=payload.batch_no or f"BATCH-{int(datetime.utcnow().timestamp())}",
+        batch_no=payload.batch_no or f"BATCH-{int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())}",
         batch_name=payload.batch_name or "Certificate Batch",
         status=payload.status or "DRAFT",
     )

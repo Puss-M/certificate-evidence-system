@@ -22,7 +22,7 @@ import io
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
@@ -459,7 +459,7 @@ def _create_evidence_receipt(db: Session, certificate_id: int, certificate_no: s
         previous_hash = last_receipt.current_block_hash
         block_height = last_receipt.block_height + 1
 
-    evidence_time = datetime.utcnow()
+    evidence_time = datetime.now(timezone.utc).replace(tzinfo=None)
     evidence_time_str = evidence_time.strftime("%Y-%m-%d %H:%M:%S")
 
     raw = f"{block_height}{certificate_no}{certificate_hash}{previous_hash}{evidence_time_str}"
@@ -639,7 +639,7 @@ class _PreviewStudent:
 
 def render_certificate_preview(template: dict) -> bytes:
     demo_certificate_no = "CERT-20260714-0001"
-    demo_issue_date = datetime.utcnow()
+    demo_issue_date = datetime.now(timezone.utc).replace(tzinfo=None)
     demo_template = {**template, "grade_level": template.get("grade_level") or "优秀"}
 
     qr_buffer = io.BytesIO()

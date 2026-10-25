@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.timeutil import utcnow
 from app.db.base import Base
 
 
@@ -41,4 +42,4 @@ class CredentialRoot(Base):
     # 保持None，不影响本地这条记录本身的完整性——Root在本地已经算好、已经能验证，
     # 上链只是给它多附加一份"链上回执"。
     tx_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

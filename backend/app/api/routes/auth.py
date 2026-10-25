@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import hashlib
 import secrets
 
@@ -94,7 +94,7 @@ def _serialize_user(user: User | dict) -> dict:
 
 def _create_token(user: User, db: Session) -> str:
     secret = _auth_secret()
-    issued_at = datetime.utcnow()
+    issued_at = datetime.now(timezone.utc).replace(tzinfo=None)
     expires_at = issued_at + timedelta(minutes=settings.auth_access_token_minutes)
     jti = secrets.token_urlsafe(32)
     payload = {
@@ -144,7 +144,7 @@ def get_current_user(
         or session is None
         or session.user_id != user.user_id
         or session.revoked_at is not None
-        or session.expires_at <= datetime.utcnow()
+        or session.expires_at <= datetime.now(timezone.utc).replace(tzinfo=None)
     ):
         raise HTTPException(status_code=401, detail="未登录或 token 失效")
     return {**_serialize_user(user), "jti": jti}
@@ -211,7 +211,7 @@ def logout(
     if jti:
         session = db.get(AuthSession, jti)
         if session is not None and session.revoked_at is None:
-            session.revoked_at = datetime.utcnow()
+            session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.commit()
     return ApiResponse.success({"logged_out": True})
 
@@ -240,7 +240,7 @@ def change_password(
         AuthSession.user_id == user.user_id,
         AuthSession.jti != current_user.get("jti"),
         AuthSession.revoked_at.is_(None),
-    ).update({AuthSession.revoked_at: datetime.utcnow()}, synchronize_session=False)
+    ).update({AuthSession.revoked_at: datetime.now(timezone.utc).replace(tzinfo=None)}, synchronize_session=False)
     db.commit()
     return ApiResponse.success({"password_changed": True})
 
@@ -250,7 +250,7 @@ def register_from_invitation(
     payload: InvitationRegistrationRequest,
     db: Session = Depends(get_db),
 ) -> ApiResponse[dict]:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     token_hash = hashlib.sha256(payload.invitation_token.encode("utf-8")).hexdigest()
     invitation = (
         db.query(Invitation)

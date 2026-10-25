@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import hashlib
 import secrets
 
@@ -61,7 +61,7 @@ def update_user_status(
         db.query(AuthSession).filter(
             AuthSession.user_id == user.user_id,
             AuthSession.revoked_at.is_(None),
-        ).update({AuthSession.revoked_at: datetime.utcnow()}, synchronize_session=False)
+        ).update({AuthSession.revoked_at: datetime.now(timezone.utc).replace(tzinfo=None)}, synchronize_session=False)
     db.add(
         AuditLog(
             action="账号状态变更",
@@ -83,7 +83,7 @@ def create_teacher_invitation(
     current_user: dict = Depends(require_roles("ADMIN")),
 ) -> ApiResponse[dict]:
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(hours=payload.expires_in_hours)
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=payload.expires_in_hours)
     invitation = Invitation(
         token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
         role="TEACHER",

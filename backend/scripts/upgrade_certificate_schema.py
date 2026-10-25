@@ -1,3 +1,5 @@
+import warnings
+
 from sqlalchemy import Index, MetaData, Table, and_, func, inspect, select, text
 from sqlalchemy.engine import Engine
 
@@ -22,7 +24,11 @@ def _column_names(table_name: str) -> set[str]:
     inspector = inspect(_database_engine())
     if table_name not in inspector.get_table_names():
         return set()
-    return {column["name"] for column in inspector.get_columns(table_name)}
+    # SQLite 可能反射出 INTEGER(1) 这类带参类型；本脚本只用列名，类型重建失败无影响
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Could not instantiate type", category=Warning)
+        columns = inspector.get_columns(table_name)
+    return {column["name"] for column in columns}
 
 
 def _add_column_if_missing(table_name: str, column_name: str, ddl: str) -> None:
@@ -69,7 +75,10 @@ def _create_unique_index_if_missing(
 ) -> None:
     if column_names in _unique_column_sets(table_name):
         return
-    table = Table(table_name, MetaData(), autoload_with=_database_engine())
+    # 同上：反射仅用于取列对象，带参类型重建失败可安全忽略
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Could not instantiate type", category=Warning)
+        table = Table(table_name, MetaData(), autoload_with=_database_engine())
     columns = [table.c[column_name] for column_name in column_names]
     columns_label = ", ".join(column_names)
     with _database_engine().begin() as connection:

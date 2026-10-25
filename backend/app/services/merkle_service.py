@@ -13,7 +13,7 @@ docs/协作管理/数据库设计.md 第9节。这是本地哈希链（certifica
 """
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -129,7 +129,7 @@ def compute_batch_root(db: Session, batch_id: int) -> CredentialRoot:
     last_root = db.query(CredentialRoot).order_by(CredentialRoot.root_id.desc()).first()
     previous_root_hash = last_root.current_root_hash if last_root else "0" * 64
 
-    created_at = datetime.utcnow()
+    created_at = datetime.now(timezone.utc).replace(tzinfo=None)
     created_at_str = created_at.strftime("%Y-%m-%d %H:%M:%S")
     raw = f"{batch_id}{merkle_root}{previous_root_hash}{created_at_str}"
     current_root_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()

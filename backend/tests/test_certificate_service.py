@@ -6,7 +6,7 @@ certificate_no 和 evidence_receipts.block_height 都是"查当前最大值再+1
 其中一个（IntegrityError）。generate_certificate() 里加了重试逻辑来应对这种冲突，
 这里用 mock 强制制造一次冲突，验证重试确实生效、最终两张证书拿到了不同的编号。
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from app.models.student import Student
@@ -108,7 +108,7 @@ def test_generate_certificate_retries_on_block_height_collision(db_session) -> N
                 previous_hash="0" * 64,
                 current_block_hash="1" * 64,
                 block_height=999,
-                evidence_time=datetime.utcnow(),
+                evidence_time=datetime.now(timezone.utc).replace(tzinfo=None),
                 chain_type="LOCAL_HASH_CHAIN",
             )
             db.add(duplicate)

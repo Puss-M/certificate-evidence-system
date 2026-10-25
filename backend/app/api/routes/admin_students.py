@@ -49,12 +49,12 @@ def _initial_password() -> str:
 
 
 def _revoke_sessions(db: Session, user_id: int) -> None:
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     db.query(AuthSession).filter(
         AuthSession.user_id == user_id,
         AuthSession.revoked_at.is_(None),
-    ).update({AuthSession.revoked_at: datetime.utcnow()}, synchronize_session=False)
+    ).update({AuthSession.revoked_at: datetime.now(timezone.utc).replace(tzinfo=None)}, synchronize_session=False)
 
 
 def _credential_record(student: Student, password: str) -> dict:
